@@ -1,0 +1,7 @@
+*~
+container/*.sif
+.nextflow*
+nextflow.config
+work/
+*.html
+*#

@@ -1,0 +1,3 @@
+clarity_sample_id,id,type,assay,sex,diagnosis,group,clarity_pool_id,platform,read1,read2
+2961,2961-19,tumor,tumwgs,M,bla,2961-19,19,illumina,small_T_R1.fq.gz,small_T_R2.fq.gz
+3141,3141-19,normal,tumwgs,M,bla,2961-19,19,illumina,small_N_R1.fq.gz,small_N_R2.fq.gz
