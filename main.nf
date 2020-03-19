@@ -52,6 +52,12 @@ Channel
     .splitCsv(header:true)
     .map{ row-> tuple(row.group, row.id, row.sex, row.mother, row.father, row.phenotype, row.diagnosis) }
     .set { meta_gatkcov }
+Channel
+    .fromPath(params.csv)
+    .splitCsv(header:true)
+    .map{ row-> tuple(row.group, row.id, row.type) }
+    .into { meta_manta ; meta_concatVCF; meta_vardict; meta_freebayes}
+
 
 
 // Split bed file in to smaller parts to be used for parallel variant calling
@@ -224,6 +230,7 @@ shard_dedup_bam
     .groupTuple()
     .into{ all_dedup_bams1; all_dedup_bams2; all_dedup_bams4 }
 
+
 //merge shards with shard combinations
 shards3
     .merge(tuple(shardie1))
@@ -241,6 +248,7 @@ process dedup_metrics_merge {
 	sentieon driver --passthru --algo Dedup --merge dedup_metrics.txt $dedup
 	"""
 }
+
 
 //Collect various QC data: TODO MOVE qc_sentieon to container!
 process sentieon_qc {
@@ -342,7 +350,7 @@ process merge_dedup_bam {
 		set val(id), file(bams), file(bais) from all_dedup_bams4
 
 	output:
-		set group, id, file("${id}_merged_dedup.bam"), file("${id}_merged_dedup.bam.bai") into chanjo_bam, cov_bam, freebayes_bam, vardict_bam
+		set group, id, file("${id}_merged_dedup.bam"), file("${id}_merged_dedup.bam.bai") into chanjo_bam, cov_bam, freebayes_bam, vardict_bam, manta_bam
 
 	script:
 		bams_sorted_str = bams.sort(false) { a, b -> a.getBaseName().tokenize("_")[0] as Integer <=> b.getBaseName().tokenize("_")[0] as Integer } .join(' -i ')
@@ -352,7 +360,6 @@ process merge_dedup_bam {
 	sentieon util merge -i ${bams_sorted_str} -o ${id}_merged_dedup.bam --mergemode 10
 	"""
 }
-
 
 // Calculate coverage for chanjo
 /*process chanjo_sambamba {
@@ -368,7 +375,8 @@ process merge_dedup_bam {
 	"""
 	sambamba depth region -t ${task.cpus} -L $scoutbed -T 10 -T 15 -T 20 -T 50 -T 100 $bam > ${id}_.bwa.chanjo.cov
 	"""
-}*/
+} */
+
 
 bqsr_merged
     .groupTuple()
@@ -415,26 +423,37 @@ process dnascope {
 }
 
 
+
 // Variant calling with freebayes
 process freebayes {
     cpus 1
 
     input:
-		set gr, id, file(bam), file(bai) from freebayes_bam.groupTuple(by:1).view()
+		set val(gr), id, file(bam), file(bai) from freebayes_bam.groupTuple()
+		set val(group), smpl_id , val(type) from meta_freebayes.groupTuple()
 		each file(bed) from beds_freebayes
 
 	output:
-		set val("freebayes"), gr, file("freebayes_${bed}.vcf") into vcfparts_freebayes
-
+		set val("freebayes"), group , file("freebayes_${bed}.vcf") into vcfparts_freebayes
+		
 //	when:
 //	    params.freebayes
 
 	script:
 		if( mode == "paired" ) {
-			"""
-			freebayes -f $genome_file -t $bed --pooled-continuous --pooled-discrete --min-repeat-entropy 1 -F 0.03 $bam > freebayes_${bed}.vcf.raw
-			vcffilter -F LowCov -f "DP > 30" -f "QA > 150" freebayes_${bed}.vcf.raw | vcffilter -F LowFrq -o -f "AB > 0.05" -f "AB = 0" | vcfglxgt > freebayes_${bed}.filt1.vcf
-			filter_freebayes_somatic.pl freebayes_${bed}.filt1.vcf > freebayes_${bed}.vcf
+		    Tumor_index = type.findIndexOf{ it == 'tumor' }
+		    ID_Tumor = smpl_id[Tumor_index]
+		    tumor_index= id.findIndexOf{it == "$ID_Tumor" }
+		    bam_tumor = bam[tumor_index]
+
+		    Normal_index = type.findIndexOf{ it == 'normal' }
+		    ID_normal = smpl_id[Normal_index]
+		    normal_index = id.findIndexOf{it == "$ID_normal" }
+		    bam_normal = bam[normal_index]
+		"""
+		freebayes -f $genome_file -t $bed --pooled-continuous --pooled-discrete --min-repeat-entropy 1 -F 0.03 $bam_tumor $bam_normal  > freebayes_${bed}.vcf.raw
+		vcffilter -F LowCov -f "DP > 30" -f "QA > 150" freebayes_${bed}.vcf.raw | vcffilter -F LowFrq -o -f "AB > 0.05" -f "AB = 0" | vcfglxgt > freebayes_${bed}.filt1.vcf
+		filter_freebayes_somatic.pl freebayes_${bed}.filt1.vcf $ID_Tumor $ID_normal > freebayes_${bed}.vcf
 			"""
 		}
 		else if( mode == "unpaired" ) {
@@ -443,45 +462,66 @@ process freebayes {
 			"""
 		}
 }
-    
+
+
+
 process vardict {
-    cpus 1
+    cpus 4
 
     input:
-		set gr, id, file(bam), file(bai) from vardict_bam.groupTuple(by:1).view()
+		set gr, id, file(bam), file(bai) from vardict_bam.groupTuple()
+		set val(group), smpl_id , val(type) from meta_vardict.groupTuple()
 		each file(bed) from beds_vardict
+		//.splitText( by: 150, file: 'minibedpart.bed' )
 
     output:
-		set val("vardict"), gr, file("vardict_${bed}.vcf") into vcfparts_vardict
-
-    when:
-		params.vardict
+		set val("vardict"), group , file("vardict_${bed}.vcf") into vcfparts_vardict
+		
+    //when:
+    //		params.vardict
 
     script:
 	if( mode == "paired" ) {
+
+		Tumor_index = type.findIndexOf{ it == 'tumor' }
+		ID_Tumor = smpl_id[Tumor_index]
+		tumor_index= id.findIndexOf{it == "$ID_Tumor" }
+		bam_tumor = bam[tumor_index]
+
+		Normal_index = type.findIndexOf{ it == 'normal' }
+		ID_normal = smpl_id[Normal_index] 
+		normal_index = id.findIndexOf{it == "$ID_normal" }
+		bam_normal = bam[normal_index]
+
 		"""
 		export JAVA_HOME=/opt/conda/envs/CMD-TUMWGS
-		vardict-java -G $genome_file -f 0.03 -N ${gr}_T -b "$bam" -c 1 -S 2 -E 3 -g 4 $bed | testsomatic.R | var2vcf_paired.pl -N "${gr}_T|${gr}_N" -f 0.03 > vardict_${bed}.vcf
+		vardict-java -U -th 4 -G $genome_file -f 0.03 -N ${ID_Tumor} -b "${bam_tumor}|${bam_normal}" -c 1 -S 2 -E 3 -g 4 ${bed} | testsomatic.R | var2vcf_paired.pl -N "${ID_Tumor}|${ID_normal}" -f 0.03 > vardict_${bed}.vcf
 		"""
 	}
 	else if( mode == "unpaired" ) {
 		"""
 		export JAVA_HOME=/opt/conda/envs/CMD-TUMWGS
-		vardict-java -G $genome_file -f 0.03 -N ${gr}_T -b $bamT -c 1 -S 2 -E 3 -g 4 $bed | teststrandbias.R | var2vcf_valid.pl -N ${gr}_T -E -f 0.03 > vardict_${bed}.vcf
+		vardict-java -U -G $genome_file -f 0.03 -N ${id} -b $bam -c 1 -S 2 -E 3 -g 4 $bed | teststrandbias.R | var2vcf_valid.pl -N  ${id} -E -f 0.03 > vardict_${bed}.vcf
 		"""
 	}
 }
 
+
+
 // Prepare vcf parts for concatenation
 vcfparts_freebayes = vcfparts_freebayes.groupTuple(by:[0,1])
-vcfparts_vardict   = vcfparts_vardict.groupTuple(by:[0,1])
-vcfs_to_concat     = vcfparts_freebayes.mix(vcfparts_vardict).view()
+vcfparts_vardict = vcfparts_vardict.groupTuple(by:[0,1])
+vcfs_to_concat = vcfparts_freebayes.mix(vcfparts_vardict)
+
+
+
 
 process concatenate_vcfs {
 	publishDir "${OUTDIR}/vcf", mode: 'copy', overwrite: true
 
 	input:
 		set vc, gr, file(vcfs) from vcfs_to_concat
+		
 
 	output:
 		set val("sample"), file("${gr}_${vc}.vcf.gz") into concatenated_vcfs
@@ -489,11 +529,13 @@ process concatenate_vcfs {
 	"""
 	vcf-concat $vcfs | vcf-sort -c | gzip -c > ${vc}.concat.vcf.gz
 	vt decompose ${vc}.concat.vcf.gz -o ${vc}.decomposed.vcf.gz
-	vt normalize ${vc}.decomposed.vcf.gz -r $genome_file | vt uniq - -o ${gr}_${vc}.vcf.gz
+	vt index ${vc}.decomposed.vcf.gz
+	vt sort -m chrom  ${vc}.decomposed.vcf.gz -o  ${vc}.decomposed.sorted.vcf.gz
+	vt normalize ${vc}.decomposed.sorted.vcf.gz -r $genome_file | vt uniq - -o ${gr}_${vc}.vcf.gz
 	"""
 }
 
-    
+   
 
 // Merge vcf shards
 process merge_vcf {
@@ -624,7 +666,7 @@ process annotate_vep {
 		-custom $GNOMAD \\
 		-custom $GERP \\
 		-custom $PHYLOP \\
-		-custom $PHASTCONS
+		-custom $PHASTCONS 
 	"""
 }
 
@@ -664,6 +706,8 @@ process modify_vcf {
 } 
 
 
+
+
 // Bgzipping and indexing VCF: 
 process vcf_completion {
 	cpus 16
@@ -674,12 +718,16 @@ process vcf_completion {
 
 	output:
 		set group, file("${group}.tnscope.vcf.gz"), file("${group}.tnscope.vcf.gz.tbi") into vcf_done
-
+		
 	"""
 	bgzip -@ ${task.cpus} $vcf -f
 	tabix ${vcf}.gz -f
-	mv ${vcf.gz} ${group}.tnscope.vcf.gz
+	mv *.gz ${group}.tnscope.vcf.gz
+	mv *.gz.tbi ${group}.tnscope.vcf.gz.tbi
+	
 	"""
+
+	
 }
 
 vcf_done.into {
@@ -691,7 +739,7 @@ vcf_done.into {
 
 
 // Extract all variants (from whole genome) with a gnomAD af > x%
-/*process fastgnomad {
+process fastgnomad {
 	cpus 2
 	memory '16 GB'
 
@@ -708,11 +756,11 @@ vcf_done.into {
 	annotate -g $params.FASTGNOMAD_REF -i ${vcf}.gz > ${group}.SNPs.vcf
 	"""
 	
-}*/
+}
 
 
 // Create coverage profile using GATK
-/*process gatkcov {
+process gatkcov {
 	publishDir "${OUTDIR}/cov", mode: 'copy' , overwrite: 'true'    
     
 	cpus 2
@@ -743,6 +791,63 @@ vcf_done.into {
 		--sequence-dictionary $params.GENOMEDICT \
 		--minimum-contig-length 46709983 --output . --output-prefix $id
 	"""
-}*/
+}
+
+
+
+//Somatic Variant Calling - Manat 
+process manta{
+	publishDir "$OUTDIR/manta" , mode:'copy'
+	cpus = 20 
+	input: 
+		set val(gr), id, file(bam), file(bai) from manta_bam.groupTuple()
+		set val(group), smpl_id , val(type) from meta_manta.groupTuple()
+
+	output:
+		set val(group), file("${group}_manta.vcf") into manta_vcf
+
+	script:
+	
+	//options = paramsBED ? "--exome --callRegions ${params.targetsBED} " : ""
+	if( mode == "paired" ) {
+
+		Tumor_index = type.findIndexOf{ it == 'tumor' }
+		ID_Tumor = smpl_id[Tumor_index]
+		tumor_index= id.findIndexOf{it == "$ID_Tumor" }
+		bam_tumor = bam[tumor_index]
+
+		Normal_index = type.findIndexOf{ it == 'normal' }
+		ID_normal = smpl_id[Normal_index] 
+		normal_index = id.findIndexOf{it == "$ID_normal" }
+		bam_normal = bam[normal_index]
+
+		"""
+		configManta.py \\
+		--tumorBam ${bam_tumor} \\
+		--normalBam ${bam_normal} \\
+		--reference ${genome_file} \\
+		--runDir .
+
+		python runWorkflow.py -m local -j ${task.cpus}
+		mv ./results/variants/somaticSV.vcf.gz ${group}_manta.vcf.gz
+		gunzip ${group}_manta.vcf.gz
+		
+		"""
+		}
+	else if( mode == "unpaired" ) {
+		"""
+		configManta.py \\
+			--tumorBam ${bam} \\
+			--reference ${genome_file} \\
+			--generateEvidenceBam \\
+			--region \\
+			--runDir .
+		python runWorkflow.py -m local -j ${task.cpus}
+		
+		mv ./results/variants/tumorSV.vcf.gz ${group}_manta.vcf.gz
+		gunzip ${group}_manta.vcf.gz 
+		"""
+		}	
+	}
 
 
