@@ -50,8 +50,9 @@ Channel
 Channel
     .fromPath(params.csv)
     .splitCsv(header:true)
-    .map{ row-> tuple(row.group, row.id, row.sex, row.mother, row.father, row.phenotype, row.diagnosis) }
+	.map{ row-> tuple(row.group, row.id, row.sex, row.type) }
     .set { meta_gatkcov }
+
 Channel
     .fromPath(params.csv)
     .splitCsv(header:true)
@@ -209,7 +210,7 @@ process dedup {
 
 	output:
 		set val(id), file("${shard_name}_${id}.bam"), file("${shard_name}_${id}.bam.bai") into shard_dedup_bam
-		set val(group_id), file("${shard_name}_${id}.bam"), file("${shard_name}_${id}.bam.bai") into dnascope_bams
+		set val(group_id), file("${shard_name}_${id}.bam"), file("${shard_name}_${id}.bam.bai") into tndnascope_bams
 		set id, file("${shard_name}_${id}_dedup_metrics.txt") into dedup_metrics
 
 	script:
@@ -387,18 +388,18 @@ all_dedup_bams2
     .set{ all_dedup_bams3 }
 
 
-dnascope_bams.groupTuple().set { allbams }
+tndnascope_bams.groupTuple().set { allbams }
 
 all_dedup_bams3
     .combine(shard_shard2).groupTuple(by:5).combine(allbams)
-    .set{ bam_shard_shard }
+    .set{ tnscope_bam_shards, dnascope_bam_shards }
 
-// Do variant calling using DNAscope, sharded
-process dnascope {
+// Do somatic SNV calling using TNscope, sharded
+process tnscope {
 	cpus 16
 
 	input:
-		set id, bams_dummy, bai_dummy, bqsr, val(shard_name), val(shard), val(one), val(two), val(three), val(grid), file(bams), file(bai) from bam_shard_shard
+		set id, bams_dummy, bai_dummy, bqsr, val(shard_name), val(shard), val(one), val(two), val(three), val(grid), file(bams), file(bai) from tnscope_bam_shards
 
 	output:
 		set grid, file("${shard_name[0]}.vcf"), file("${shard_name[0]}.vcf.idx") into vcf_shard
@@ -422,6 +423,81 @@ process dnascope {
 	"""
 }
 
+
+// Do germline SNV calling using DNAscope, sharded
+process dnascope {
+	cpus 16
+
+	input:
+		set id, bams_dummy, bai_dummy, bqsr, val(shard_name), val(shard), val(one), val(two), val(three), val(grid), file(bams), file(bai) from dnascope_bam_shards
+
+	output:
+		set grid, file("dnascope_${shard_name[0]}.vcf"), file("dnascope_${shard_name[0]}.vcf.idx") into gvcf_shard
+
+	script:
+		combo = [one[0], two[0], three[0]] // one two three take on values 0 1 2, 1 2 3...30 31 32
+		combo = (combo - 0) //first dummy value removed (0)
+		combo = (combo - (genomic_num_shards+1)) //last dummy value removed (32)
+		commonsT = (combo.collect{ "${it}_${id[0]}.bam" })   //add .bam to each combo to match bam files from input channel
+		commonsN = (combo.collect{ "${it}_${id[1]}.bam" })   //add .bam to each combo to match bam files from input channel
+		bam_neighT = commonsT.join(' -i ') 
+		bam_neighN = commonsN.join(' -i ') 
+
+	"""
+	/opt/sentieon-genomics-201711.05/bin/sentieon driver \\
+		-t ${task.cpus} \\
+		-r $genome_file \\
+		-i $bam_neighT -i $bam_neighN $shard \\
+		-q ${bqsr[0][0]} -q ${bqsr[1][0]} \\
+		--algo DNAscope --emit_mode GVCF dnascope_${shard_name[0]}.vcf
+	"""
+}
+
+// Merge vcf shards from TNscope
+process merge_vcf {
+	cpus 16
+
+	input:
+		set id, file(vcfs), file(idx) from vcf_shard.groupTuple()
+        
+	output:
+		set group, file("${id}.tnscope.vcf"), file("${id}.tnscope.vcf.idx") into complete_vcf
+
+	script:
+		group = "vcfs"
+		vcfs_sorted = vcfs.sort(false) { a, b -> a.getBaseName().tokenize("_")[0] as Integer <=> b.getBaseName().tokenize("_")[0] as Integer } .join(' ')
+
+	"""
+	/opt/sentieon-genomics-201711.05/bin/sentieon driver \\
+		-t ${task.cpus} \\
+		--passthru \\
+		--algo DNAscope \\
+		--merge ${id}.tnscope.vcf $vcfs_sorted
+	"""
+}
+
+// Merge gvcf shards from DNAscope
+process merge_gvcf {
+	cpus 16
+
+	input:
+		set id, file(vcfs), file(idx) from gvcf_shard.groupTuple()
+        
+	output:
+		set group, id, file("${id}.dnascope.gvcf.gz") into gvcf_gens
+
+	script:
+		group = "vcfs"
+		vcfs_sorted = vcfs.sort(false) { a, b -> a.getBaseName().tokenize("_")[0] as Integer <=> b.getBaseName().tokenize("_")[0] as Integer } .join(' ')
+
+	"""
+	/opt/sentieon-genomics-201711.05/bin/sentieon driver \\
+		-t ${task.cpus} \\
+		--passthru \\
+		--algo DNAscope \\
+		--merge ${id}.dnascope.gvcf.gz $vcfs_sorted
+	"""
+}
 
 
 // Variant calling with freebayes
@@ -537,28 +613,6 @@ process concatenate_vcfs {
 
    
 
-// Merge vcf shards
-process merge_vcf {
-	cpus 16
-
-	input:
-		set id, file(vcfs), file(idx) from vcf_shard.groupTuple()
-        
-	output:
-		set group, file("${id}.dnascope.vcf"), file("${id}.dnascope.vcf.idx") into complete_vcf
-
-	script:
-		group = "vcfs"
-		vcfs_sorted = vcfs.sort(false) { a, b -> a.getBaseName().tokenize("_")[0] as Integer <=> b.getBaseName().tokenize("_")[0] as Integer } .join(' ')
-
-	"""
-	/opt/sentieon-genomics-201711.05/bin/sentieon driver \\
-		-t ${task.cpus} \\
-		--passthru \\
-		--algo DNAscope \\
-		--merge ${id}.dnascope.vcf $vcfs_sorted
-	"""
-}
 
 complete_vcf
     .groupTuple()
@@ -767,11 +821,10 @@ process gatkcov {
 	memory '16 GB'
 
 	input:
-		set group, id, file(bam), file(bai) from cov_bam
-		set gr, id, sex, mother, father, phenotype, diagnosis from meta_gatkcov
+		set id, group, file(bam), file(bai), gr, sex, type from cov_bam.join(meta_gatkcov, by:1)
 
 	output:
-		set file("${id}.standardizedCR.tsv"), file("${id}.denoisedCR.tsv") into cov_plot
+		set file("${id}.standardizedCR.tsv"), file("${id}.denoisedCR.tsv") into cov_plot, cov_gens
 
 	"""
 	source activate gatk4-env
@@ -793,6 +846,21 @@ process gatkcov {
 	"""
 }
 
+process generate_gens_data {
+	publishDir "${OUTDIR}/plot_data", mode: 'copy' , overwrite: 'true'
+	tag "$group"
+	cpus 1
+
+	input:
+		set id, group, file(gvcf), g, type, sex, file(cov_stand), file(cov_denoise) from gvcf_gens.join(cov_gens, by:[1])
+
+	output:
+		set file("${id}.cov.bed.gz"), file("${id}.baf.bed.gz"), file("${id}.cov.bed.gz.tbi"), file("${id}.baf.bed.gz.tbi")
+
+	"""
+	generate_gens_data.pl $cov_stand $gvcf $id $params.GENS_GNOMAD
+	"""
+}
 
 
 //Somatic Variant Calling - Manat 
