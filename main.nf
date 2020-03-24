@@ -351,7 +351,7 @@ process merge_dedup_bam {
 		set val(id), file(bams), file(bais) from all_dedup_bams4
 
 	output:
-		set group, id, file("${id}_merged_dedup.bam"), file("${id}_merged_dedup.bam.bai") into chanjo_bam, cov_bam, freebayes_bam, vardict_bam, manta_bam
+		set group, id, file("${id}_merged_dedup.bam"), file("${id}_merged_dedup.bam.bai") into cov_bam, freebayes_bam, vardict_bam, manta_bam
 
 	script:
 		bams_sorted_str = bams.sort(false) { a, b -> a.getBaseName().tokenize("_")[0] as Integer <=> b.getBaseName().tokenize("_")[0] as Integer } .join(' -i ')
@@ -361,23 +361,6 @@ process merge_dedup_bam {
 	sentieon util merge -i ${bams_sorted_str} -o ${id}_merged_dedup.bam --mergemode 10
 	"""
 }
-
-// Calculate coverage for chanjo
-/*process chanjo_sambamba {
-	cpus 16
-	memory '64 GB'
-
-	input:	
-		set group, id, file(bam), file(bai) from chanjo_bam
-
-	output:
-		file("${id}_.bwa.chanjo.cov") into chanjocov
-
-	"""
-	sambamba depth region -t ${task.cpus} -L $scoutbed -T 10 -T 15 -T 20 -T 50 -T 100 $bam > ${id}_.bwa.chanjo.cov
-	"""
-} */
-
 
 bqsr_merged
     .groupTuple()
@@ -392,7 +375,7 @@ tndnascope_bams.groupTuple().set { allbams }
 
 all_dedup_bams3
     .combine(shard_shard2).groupTuple(by:5).combine(allbams)
-    .set{ tnscope_bam_shards, dnascope_bam_shards }
+    .into{ tnscope_bam_shards; dnascope_bam_shards }
 
 // Do somatic SNV calling using TNscope, sharded
 process tnscope {
@@ -447,8 +430,8 @@ process dnascope {
 	/opt/sentieon-genomics-201711.05/bin/sentieon driver \\
 		-t ${task.cpus} \\
 		-r $genome_file \\
-		-i $bam_neighT -i $bam_neighN $shard \\
-		-q ${bqsr[0][0]} -q ${bqsr[1][0]} \\
+		-i $bam_neighT $shard \\
+		-q ${bqsr[0][0]} \\
 		--algo DNAscope --emit_mode GVCF dnascope_${shard_name[0]}.vcf
 	"""
 }
@@ -512,24 +495,22 @@ process freebayes {
 	output:
 		set val("freebayes"), group , file("freebayes_${bed}.vcf") into vcfparts_freebayes
 		
-//	when:
-//	    params.freebayes
-
 	script:
 		if( mode == "paired" ) {
-		    Tumor_index = type.findIndexOf{ it == 'tumor' }
-		    ID_Tumor = smpl_id[Tumor_index]
-		    tumor_index= id.findIndexOf{it == "$ID_Tumor" }
-		    bam_tumor = bam[tumor_index]
+			Tumor_index = type.findIndexOf{ it == 'tumor' }
+			ID_Tumor = smpl_id[Tumor_index]
+			tumor_index= id.findIndexOf{it == "$ID_Tumor" }
+			bam_tumor = bam[tumor_index]
 
-		    Normal_index = type.findIndexOf{ it == 'normal' }
-		    ID_normal = smpl_id[Normal_index]
-		    normal_index = id.findIndexOf{it == "$ID_normal" }
-		    bam_normal = bam[normal_index]
-		"""
-		freebayes -f $genome_file -t $bed --pooled-continuous --pooled-discrete --min-repeat-entropy 1 -F 0.03 $bam_tumor $bam_normal  > freebayes_${bed}.vcf.raw
-		vcffilter -F LowCov -f "DP > 30" -f "QA > 150" freebayes_${bed}.vcf.raw | vcffilter -F LowFrq -o -f "AB > 0.05" -f "AB = 0" | vcfglxgt > freebayes_${bed}.filt1.vcf
-		filter_freebayes_somatic.pl freebayes_${bed}.filt1.vcf $ID_Tumor $ID_normal > freebayes_${bed}.vcf
+			Normal_index = type.findIndexOf{ it == 'normal' }
+			ID_normal = smpl_id[Normal_index]
+			normal_index = id.findIndexOf{it == "$ID_normal" }
+			bam_normal = bam[normal_index]
+
+			"""
+			freebayes -f $genome_file -t $bed --pooled-continuous --pooled-discrete --min-repeat-entropy 1 -F 0.03 $bam_tumor $bam_normal  > freebayes_${bed}.vcf.raw
+			vcffilter -F LowCov -f "DP > 30" -f "QA > 150" freebayes_${bed}.vcf.raw | vcffilter -F LowFrq -o -f "AB > 0.05" -f "AB = 0" | vcfglxgt > freebayes_${bed}.filt1.vcf
+			filter_freebayes_somatic.pl freebayes_${bed}.filt1.vcf $ID_Tumor $ID_normal > freebayes_${bed}.vcf
 			"""
 		}
 		else if( mode == "unpaired" ) {
@@ -542,44 +523,41 @@ process freebayes {
 
 
 process vardict {
-    cpus 4
+	cpus 4
 
-    input:
+	input:
 		set gr, id, file(bam), file(bai) from vardict_bam.groupTuple()
 		set val(group), smpl_id , val(type) from meta_vardict.groupTuple()
 		each file(bed) from beds_vardict
 		//.splitText( by: 150, file: 'minibedpart.bed' )
 
-    output:
+	output:
 		set val("vardict"), group , file("vardict_${bed}.vcf") into vcfparts_vardict
 		
-    //when:
-    //		params.vardict
+	script:
+		if( mode == "paired" ) {
 
-    script:
-	if( mode == "paired" ) {
+			Tumor_index = type.findIndexOf{ it == 'tumor' }
+			ID_Tumor = smpl_id[Tumor_index]
+			tumor_index= id.findIndexOf{it == "$ID_Tumor" }
+			bam_tumor = bam[tumor_index]
 
-		Tumor_index = type.findIndexOf{ it == 'tumor' }
-		ID_Tumor = smpl_id[Tumor_index]
-		tumor_index= id.findIndexOf{it == "$ID_Tumor" }
-		bam_tumor = bam[tumor_index]
+			Normal_index = type.findIndexOf{ it == 'normal' }
+			ID_normal = smpl_id[Normal_index] 
+			normal_index = id.findIndexOf{it == "$ID_normal" }
+			bam_normal = bam[normal_index]
 
-		Normal_index = type.findIndexOf{ it == 'normal' }
-		ID_normal = smpl_id[Normal_index] 
-		normal_index = id.findIndexOf{it == "$ID_normal" }
-		bam_normal = bam[normal_index]
-
-		"""
-		export JAVA_HOME=/opt/conda/envs/CMD-TUMWGS
-		vardict-java -U -th 4 -G $genome_file -f 0.03 -N ${ID_Tumor} -b "${bam_tumor}|${bam_normal}" -c 1 -S 2 -E 3 -g 4 ${bed} | testsomatic.R | var2vcf_paired.pl -N "${ID_Tumor}|${ID_normal}" -f 0.03 > vardict_${bed}.vcf
-		"""
-	}
-	else if( mode == "unpaired" ) {
-		"""
-		export JAVA_HOME=/opt/conda/envs/CMD-TUMWGS
-		vardict-java -U -G $genome_file -f 0.03 -N ${id} -b $bam -c 1 -S 2 -E 3 -g 4 $bed | teststrandbias.R | var2vcf_valid.pl -N  ${id} -E -f 0.03 > vardict_${bed}.vcf
-		"""
-	}
+			"""
+			export JAVA_HOME=/opt/conda/envs/CMD-TUMWGS
+			vardict-java -U -th 4 -G $genome_file -f 0.03 -N ${ID_Tumor} -b "${bam_tumor}|${bam_normal}" -c 1 -S 2 -E 3 -g 4 ${bed} | testsomatic.R | var2vcf_paired.pl -N "${ID_Tumor}|${ID_normal}" -f 0.03 > vardict_${bed}.vcf
+			"""
+		}
+		else if( mode == "unpaired" ) {
+			"""
+			export JAVA_HOME=/opt/conda/envs/CMD-TUMWGS
+			vardict-java -U -G $genome_file -f 0.03 -N ${id} -b $bam -c 1 -S 2 -E 3 -g 4 $bed | teststrandbias.R | var2vcf_valid.pl -N  ${id} -E -f 0.03 > vardict_${bed}.vcf
+			"""
+		}
 }
 
 
