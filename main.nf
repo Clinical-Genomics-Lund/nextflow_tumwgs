@@ -1,5 +1,5 @@
 #!/usr/bin/env nextflow
-
+1;5202;0c
 // GENERAL PATHS //
 OUTDIR = params.outdir+'/'+params.subdir
 CRONDIR = params.crondir
@@ -304,6 +304,8 @@ process qc_to_cdm {
 
 process bqsr {
 	cpus 16
+	errorStrategy 'retry'
+	maxErrors 5
 
 	input:
 		set val(id), file(bams), file(bai), val(shard_name), val(shard), val(one), val(two), val(three) from all_dedup_bams1.combine(shard_shard)
