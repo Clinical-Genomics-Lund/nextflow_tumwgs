@@ -417,7 +417,7 @@ process dnascope {
 		set id, bams_dummy, bai_dummy, bqsr, val(shard_name), val(shard), val(one), val(two), val(three), val(grid), file(bams), file(bai) from dnascope_bam_shards
 
 	output:
-		set grid, file("dnascope_${shard_name[0]}.vcf.gz"), file("dnascope_${shard_name[0]}.vcf.tbi") into gvcf_shard
+		set grid, file("dnascope_${shard_name[0]}.vcf.gz"), file("dnascope_${shard_name[0]}.vcf.gz.tbi") into gvcf_shard
 
 	script:
 		combo = [one[0], two[0], three[0]] // one two three take on values 0 1 2, 1 2 3...30 31 32
@@ -434,7 +434,7 @@ process dnascope {
 		-r $genome_file \\
 		-i $bam_neighT $shard \\
 		-q ${bqsr[0][0]} \\
-		--algo DNAscope --emit_mode GVCF dnascope_${shard_name[0]}.vcf
+		--algo DNAscope --emit_mode GVCF dnascope_${shard_name[0]}.vcf.gz
 	"""
 }
 
