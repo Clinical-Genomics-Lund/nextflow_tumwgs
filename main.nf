@@ -471,7 +471,7 @@ process merge_gvcf {
 
 	script:
 		group = "vcfs"
-		vcfs_sorted = vcfs.sort(false) { a, b -> a.getBaseName().tokenize("_")[0] as Integer <=> b.getBaseName().tokenize("_")[0] as Integer } .join(' ')
+		vcfs_sorted = vcfs.sort(false) { a, b -> a.getBaseName().tokenize("_")[1] as Integer <=> b.getBaseName().tokenize("_")[1] as Integer } .join(' ')
 
 	"""
 	/opt/sentieon-genomics-201711.05/bin/sentieon driver \\
