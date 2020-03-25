@@ -17,7 +17,6 @@ dependencies:
     - bioconda::vcftools=0.1.16
     - bioconda::perl-vcftools-vcf=0.1.16
     - bioconda::vt=2015.11.10
-    - bioconda::sentieon=201808.08
     - bioconda::manta=1.6.0
     - bioconda::pybigwig=0.3.17
     - bioconda::perl-app-cpanminus=1.7044

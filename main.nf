@@ -397,7 +397,7 @@ process tnscope {
 		bam_neighN = commonsN.join(' -i ') 
 
 	"""
-	/opt/sentieon-genomics-201711.05/bin/sentieon driver \\
+	sentieon driver \\
 		-t ${task.cpus} \\
 		-r $genome_file \\
 		-i $bam_neighT -i $bam_neighN $shard \\
@@ -415,7 +415,7 @@ process dnascope {
 		set id, bams_dummy, bai_dummy, bqsr, val(shard_name), val(shard), val(one), val(two), val(three), val(grid), file(bams), file(bai) from dnascope_bam_shards
 
 	output:
-		set grid, file("dnascope_${shard_name[0]}.vcf"), file("dnascope_${shard_name[0]}.vcf.idx") into gvcf_shard
+		set grid, file("dnascope_${shard_name[0]}.vcf.gz"), file("dnascope_${shard_name[0]}.vcf.tbi") into gvcf_shard
 
 	script:
 		combo = [one[0], two[0], three[0]] // one two three take on values 0 1 2, 1 2 3...30 31 32
@@ -427,7 +427,7 @@ process dnascope {
 		bam_neighN = commonsN.join(' -i ') 
 
 	"""
-	/opt/sentieon-genomics-201711.05/bin/sentieon driver \\
+	sentieon driver \\
 		-t ${task.cpus} \\
 		-r $genome_file \\
 		-i $bam_neighT $shard \\
@@ -451,7 +451,7 @@ process merge_vcf {
 		vcfs_sorted = vcfs.sort(false) { a, b -> a.getBaseName().tokenize("_")[0] as Integer <=> b.getBaseName().tokenize("_")[0] as Integer } .join(' ')
 
 	"""
-	/opt/sentieon-genomics-201711.05/bin/sentieon driver \\
+	sentieon driver \\
 		-t ${task.cpus} \\
 		--passthru \\
 		--algo DNAscope \\
@@ -464,7 +464,7 @@ process merge_gvcf {
 	cpus 16
 
 	input:
-		set id, file(vcfs), file(idx) from gvcf_shard.groupTuple()
+		set id, file(vcfs), file(tbi) from gvcf_shard.groupTuple()
         
 	output:
 		set group, id, file("${id}.dnascope.gvcf.gz") into gvcf_gens
@@ -474,7 +474,7 @@ process merge_gvcf {
 		vcfs_sorted = vcfs.sort(false) { a, b -> a.getBaseName().tokenize("_")[1] as Integer <=> b.getBaseName().tokenize("_")[1] as Integer } .join(' ')
 
 	"""
-	/opt/sentieon-genomics-201711.05/bin/sentieon driver \\
+	sentieon driver \\
 		-t ${task.cpus} \\
 		--passthru \\
 		--algo DNAscope \\

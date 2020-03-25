@@ -4,10 +4,10 @@ From:nfcore/base
 %labels
 	MAINTAINER Björn Hallström <bjorn.hallstrom@skane.se>
 	DESCRIPTION Singularity container for CMD tumor WGS pipeline
-	VERSION 0.0.1
+	VERSION 0.0.2
 
 %environment
-	PATH=/opt/conda/envs/CMD-TUMWGS/bin:/opt/sentieon-genomics-201808.05/bin/:/opt/bin:/opt/conda/envs/py3-env/bin:/TIDDIT:$PATH
+	PATH=/opt/conda/envs/CMD-TUMWGS/bin:/opt/sentieon-genomics-201911/bin/:/opt/bin:/opt/conda/envs/py3-env/bin:$PATH
 	PICARD_HOME=/opt/conda/envs/CMD-TUMWGS/share/picard-2.21.2-0/
 	export PERL5LIB=$PERL5LIB:/opt/conda/envs/CMD-TUMWGS/lib/site_perl/5.26.2/
 	export PERL5LIB=$PERL5LIB:/opt/conda/envs/CMD-TUMWGS/lib/site_perl/5.26.2/x86_64-linux-thread-multi/
@@ -17,8 +17,7 @@ From:nfcore/base
 %files
 	environment.yml /
 	environment_gatk.yml /
-	/data/bnf/sw/sentieon/sentieon-genomics-201711.05 /opt
-
+	/data/bnf/sw/sentieon/sentieon-genomics-201911 /opt
 %post
 	rm -rf /var/lib/apt/lists/*
 	apt -y clean
