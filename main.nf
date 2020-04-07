@@ -50,14 +50,14 @@ Channel
 Channel
     .fromPath(params.csv)
     .splitCsv(header:true)
-	.map{ row-> tuple(row.group, row.id, row.sex, row.type) }
+    .map{ row-> tuple(row.group, row.id, row.sex, row.type) }
     .set { meta_gatkcov }
 
 Channel
     .fromPath(params.csv)
     .splitCsv(header:true)
     .map{ row-> tuple(row.group, row.id, row.type) }
-    .into { meta_manta ; meta_concatVCF; meta_vardict; meta_freebayes}
+    .into { meta_manta ; meta_concatVCF; meta_vardict; meta_freebayes; meta_dnascope; meta_aggregate}
 
 
 
@@ -174,6 +174,8 @@ process bwa_align {
 // or the command will occasionally crash in Sentieon 201808.07 (works in earlier)
 process locus_collector {
 	cpus 16
+	errorStrategy 'retry'
+	maxErrors 5
 
 	input:
 		set id, file(bam), file(bai), val(shard_name), val(shard) from bam.mix(merged_bam).combine(shards1)
@@ -204,6 +206,8 @@ locus_collector_scores
 process dedup {
 	cpus 16
 	cache 'deep'
+	errorStrategy 'retry'
+	maxErrors 5
 
 	input:
 		set val(id), file(score), file(idx), file(bam), file(bai), val(shard_name), val(shard) from all_scores
@@ -353,7 +357,7 @@ process merge_dedup_bam {
 		set val(id), file(bams), file(bais) from all_dedup_bams4
 
 	output:
-		set group, id, file("${id}_merged_dedup.bam"), file("${id}_merged_dedup.bam.bai") into cov_bam, freebayes_bam, vardict_bam, manta_bam
+		set group, id, file("${id}_merged_dedup.bam"), file("${id}_merged_dedup.bam.bai") into cov_bam, freebayes_bam, vardict_bam, manta_bam, dnascope_bam
 
 	script:
 		bams_sorted_str = bams.sort(false) { a, b -> a.getBaseName().tokenize("_")[0] as Integer <=> b.getBaseName().tokenize("_")[0] as Integer } .join(' -i ')
@@ -377,11 +381,13 @@ tndnascope_bams.groupTuple().set { allbams }
 
 all_dedup_bams3
     .combine(shard_shard2).groupTuple(by:5).combine(allbams)
-    .into{ tnscope_bam_shards; dnascope_bam_shards }
+    .set{ tnscope_bam_shards }
 
 // Do somatic SNV calling using TNscope, sharded
 process tnscope {
 	cpus 16
+	errorStrategy 'retry'
+	maxErrors 5
 
 	input:
 		set id, bams_dummy, bai_dummy, bqsr, val(shard_name), val(shard), val(one), val(two), val(three), val(grid), file(bams), file(bai) from tnscope_bam_shards
@@ -409,35 +415,6 @@ process tnscope {
 }
 
 
-// Do germline SNV calling using DNAscope, sharded
-process dnascope {
-	cpus 16
-
-	input:
-		set id, bams_dummy, bai_dummy, bqsr, val(shard_name), val(shard), val(one), val(two), val(three), val(grid), file(bams), file(bai) from dnascope_bam_shards
-
-	output:
-		set grid, file("dnascope_${shard_name[0]}.vcf.gz"), file("dnascope_${shard_name[0]}.vcf.gz.tbi") into gvcf_shard
-
-	script:
-		combo = [one[0], two[0], three[0]] // one two three take on values 0 1 2, 1 2 3...30 31 32
-		combo = (combo - 0) //first dummy value removed (0)
-		combo = (combo - (genomic_num_shards+1)) //last dummy value removed (32)
-		commonsT = (combo.collect{ "${it}_${id[0]}.bam" })   //add .bam to each combo to match bam files from input channel
-		commonsN = (combo.collect{ "${it}_${id[1]}.bam" })   //add .bam to each combo to match bam files from input channel
-		bam_neighT = commonsT.join(' -i ') 
-		bam_neighN = commonsN.join(' -i ') 
-
-	"""
-	sentieon driver \\
-		-t ${task.cpus} \\
-		-r $genome_file \\
-		-i $bam_neighT $shard \\
-		-q ${bqsr[0][0]} \\
-		--algo DNAscope --emit_mode GVCF dnascope_${shard_name[0]}.vcf.gz
-	"""
-}
-
 // Merge vcf shards from TNscope
 process merge_vcf {
 	cpus 16
@@ -461,35 +438,45 @@ process merge_vcf {
 	"""
 }
 
-// Merge gvcf shards from DNAscope
-process merge_gvcf {
-	cpus 16
+
+
+// Do germline SNV calling using DNAscope, sharded
+process dnascope {
+	cpus 50
+	errorStrategy 'retry'
+	maxErrors 5
 
 	input:
-		set id, file(vcfs), file(tbi) from gvcf_shard.groupTuple()
-        
+		set gr, id, file(bam), file(bai) from dnascope_bam.groupTuple()
+		set group, smpl_id, type from meta_dnascope.groupTuple()
+
 	output:
-		set group, id, file("${id}.dnascope.gvcf.gz") into gvcf_gens
+		set ID_Tumor, file("${ID_Tumor}_dnascope.vcf.gz") into gvcf_gens
 
 	script:
-		group = "vcfs"
-		vcfs_sorted = vcfs.sort(false) { a, b -> a.getBaseName().tokenize("_")[1] as Integer <=> b.getBaseName().tokenize("_")[1] as Integer } .join(' ')
+		Tumor_index = type.findIndexOf{ it == 'tumor' }
+		ID_Tumor = smpl_id[Tumor_index]
+		tumor_index= id.findIndexOf{it == "$ID_Tumor" }
+		bam_tumor = bam[tumor_index]
 
 	"""
 	sentieon driver \\
 		-t ${task.cpus} \\
-		--passthru \\
-		--algo DNAscope \\
-		--merge ${id}.dnascope.gvcf.gz $vcfs_sorted
+		-r $genome_file \\
+		-i $bam_tumor \\
+		--algo DNAscope --emit_mode GVCF ${ID_Tumor}_dnascope.vcf.gz
 	"""
 }
 
 
+
 // Variant calling with freebayes
 process freebayes {
-    cpus 1
+	cpus 1
+	errorStrategy 'retry'
+	maxErrors 5
 
-    input:
+	input:
 		set val(gr), id, file(bam), file(bai) from freebayes_bam.groupTuple()
 		set val(group), smpl_id , val(type) from meta_freebayes.groupTuple()
 		each file(bed) from beds_freebayes
@@ -511,8 +498,8 @@ process freebayes {
 
 			"""
 			freebayes -f $genome_file -t $bed --pooled-continuous --pooled-discrete --min-repeat-entropy 1 -F 0.03 $bam_tumor $bam_normal  > freebayes_${bed}.vcf.raw
-			vcffilter -F LowCov -f "DP > 30" -f "QA > 150" freebayes_${bed}.vcf.raw | vcffilter -F LowFrq -o -f "AB > 0.05" -f "AB = 0" | vcfglxgt > freebayes_${bed}.filt1.vcf
-			filter_freebayes_somatic.pl freebayes_${bed}.filt1.vcf $ID_Tumor $ID_normal > freebayes_${bed}.vcf
+			#vcffilter -F LowCov -f "DP > 30" -f "QA > 150" freebayes_${bed}.vcf.raw | vcffilter -F LowFrq -o -f "AB > 0.05" -f "AB = 0" | vcfglxgt > freebayes_${bed}.filt1.vcf
+			filter_freebayes_somatic_wgs.pl freebayes_${bed}.vcf.raw $ID_Tumor $ID_normal | grep -v 'FAIL_' > freebayes_${bed}.vcf
 			"""
 		}
 		else if( mode == "unpaired" ) {
@@ -526,6 +513,8 @@ process freebayes {
 
 process vardict {
 	cpus 4
+	errorStrategy 'retry'
+	maxErrors 5
 
 	input:
 		set gr, id, file(bam), file(bai) from vardict_bam.groupTuple()
@@ -551,7 +540,8 @@ process vardict {
 
 			"""
 			export JAVA_HOME=/opt/conda/envs/CMD-TUMWGS
-			vardict-java -U -th 4 -G $genome_file -f 0.03 -N ${ID_Tumor} -b "${bam_tumor}|${bam_normal}" -c 1 -S 2 -E 3 -g 4 ${bed} | testsomatic.R | var2vcf_paired.pl -N "${ID_Tumor}|${ID_normal}" -f 0.03 > vardict_${bed}.vcf
+			vardict-java -U -th 4 -G $genome_file -f 0.03 -N ${ID_Tumor} -b "${bam_tumor}|${bam_normal}" -c 1 -S 2 -E 3 -g 4 ${bed} | testsomatic.R | var2vcf_paired.pl -N "${ID_Tumor}|${ID_normal}" -f 0.03 > vardict_${bed}.raw.vcf
+			filter_vardict_somatic_wgs.pl vardict_${bed}.raw.vcf $ID_Tumor $ID_normal | grep -v 'FAIL_' > vardict_${bed}.vcf
 			"""
 		}
 		else if( mode == "unpaired" ) {
@@ -580,7 +570,7 @@ process concatenate_vcfs {
 		
 
 	output:
-		set val("sample"), file("${gr}_${vc}.vcf.gz") into concatenated_vcfs
+        	set gr, vc, file("${gr}_${vc}.vcf.gz") into concatenated_vcfs
 
 	"""
 	vcf-concat $vcfs | vcf-sort -c | gzip -c > ${vc}.concat.vcf.gz
@@ -591,7 +581,32 @@ process concatenate_vcfs {
 	"""
 }
 
-   
+
+process aggregate_vcfs {
+	cpus 1
+	publishDir "${OUTDIR}/vcf", mode: 'copy', overwrite: true
+	time '40m'
+
+	input:
+		set group, vc, file(vcfs) from concatenated_vcfs.groupTuple()
+		set g, id, type from meta_aggregate.groupTuple()
+
+	output:
+		set group, file("${group}.agg.vcf") into vcf_vep
+
+	script:
+		sample_order = id[0]
+		if( mode == "paired" ) {
+			tumor_idx = type.findIndexOf{ it == 'tumor' || it == 'T' }
+			normal_idx = type.findIndexOf{ it == 'normal' || it == 'N' }
+			sample_order = id[tumor_idx]+","+id[normal_idx]
+		}
+
+	"""
+	aggregate_vcf.pl --vcf ${vcfs.sort(false) { a, b -> a.getBaseName() <=> b.getBaseName() }.join(",")} --sample-order ${sample_order} |vcf-sort -c > ${group}.agg.unsorted.vcf
+	vcf-sort -c ${group}.agg.unsorted.vcf > ${group}.agg.vcf
+	"""
+}
 
 
 complete_vcf
@@ -668,129 +683,33 @@ process intersect {
 
 }
 
+
 process annotate_vep {
 	container = '/fs1/resources/containers/ensembl-vep_latest.sif'
-	cpus 54
+	publishDir "${OUTDIR}/vcf", mode: 'copy', overwrite: true
+	cpus 20
+	time '1h'
 
 	input:
-		set group, file(vcf) from split_vep
+		set group, file(vcf) from vcf_vep
 
 	output:
-		set group, file("${group}.vep.vcf") into vep
+		set group, file("${group}.agg.vep.vcf") into vcf_germline
 
 	"""
-	vep \\
-		-i ${vcf} \\
-		-o ${group}.vep.vcf \\
-		--offline \\
-		--everything \\
-		--merged \\
-		--vcf \\
-		--no_stats \\
+	vep -i ${vcf} -o ${group}.agg.vep.vcf \\
+		--offline --merged --everything --vcf --no_stats \\
 		--fork ${task.cpus} \\
 		--force_overwrite \\
-		--plugin CADD,$CADD \\
-		--plugin LoFtool \\
-		--plugin MaxEntScan,$MAXENTSCAN,SWA,NCSS \\
-		--fasta $VEP_FASTA \\
-		--dir_cache $VEP_CACHE \\
-		--dir_plugins $VEP_CACHE/Plugins \\
+		--plugin CADD $params.CADD --plugin LoFtool \\
+		--fasta $params.VEP_FASTA \\
+		--dir_cache $params.VEP_CACHE --dir_plugins $params.VEP_CACHE/Plugins \\
 		--distance 200 \\
-		-cache \\
-		-custom $GNOMAD \\
-		-custom $GERP \\
-		-custom $PHYLOP \\
-		-custom $PHASTCONS 
+		-cache -custom $params.GNOMAD \\
 	"""
 }
 
-// Annotating variants with clinvar
-process annotate_clinvar {
-        cpus 1
-        memory '32GB'
 
-	input:
-		set group, file(vcf) from vep
-
-	output:
-		set group, file("${group}.clinvar.vcf") into snpsift
-
-	"""
-	SnpSift -Xmx60g annotate $CLINVAR \\
-		-info CLNSIG,CLNACC,CLNREVSTAT $vcf > ${group}.clinvar.vcf
-	"""
-
-}
-
-// Extracting most severe consequence: 
-// Modifying annotations by VEP-plugins, and adding to info-field: 
-// Modifying CLNSIG field to allow it to be used by genmod score properly:
-process modify_vcf {
-	cpus 1
-
-	input:
-		set group, file(vcf) from snpsift
-
-	output:
-		set group, file("${group}.mod.vcf") into scored_vcf
-
-	"""
-	modify_vcf_scout.pl $vcf > ${group}.mod.vcf
-	"""
-} 
-
-
-
-
-// Bgzipping and indexing VCF: 
-process vcf_completion {
-	cpus 16
-	publishDir "${OUTDIR}/vcf", mode: 'copy', overwrite: 'true'
-
-	input:
-		set group, file(vcf) from scored_vcf
-
-	output:
-		set group, file("${group}.tnscope.vcf.gz"), file("${group}.tnscope.vcf.gz.tbi") into vcf_done
-		
-	"""
-	bgzip -@ ${task.cpus} $vcf -f
-	tabix ${vcf}.gz -f
-	mv *.gz ${group}.tnscope.vcf.gz
-	mv *.gz.tbi ${group}.tnscope.vcf.gz.tbi
-	
-	"""
-
-	
-}
-
-vcf_done.into {
-    vcf_done1
-    vcf_done2
-    vcf_done3
-}
-
-
-
-// Extract all variants (from whole genome) with a gnomAD af > x%
-process fastgnomad {
-	cpus 2
-	memory '16 GB'
-
-	publishDir "${OUTDIR}/vcf", mode: 'copy', overwrite: 'true'
-
-    input:
-		set group, file(vcf) from vcf_gnomad
-
-	output:
-		set group, file("${group}.SNPs.vcf") into vcf_upd, vcf_roh
-
-	"""
-	gzip -c $vcf > ${vcf}.gz
-	annotate -g $params.FASTGNOMAD_REF -i ${vcf}.gz > ${group}.SNPs.vcf
-	"""
-	
-}
 
 
 // Create coverage profile using GATK
@@ -798,31 +717,70 @@ process gatkcov {
 	publishDir "${OUTDIR}/cov", mode: 'copy' , overwrite: 'true'    
     
 	cpus 2
-	memory '16 GB'
+	memory '64 GB'
 
 	input:
-		set id, group, file(bam), file(bai), gr, sex, type from cov_bam.join(meta_gatkcov, by:1)
+		set id, group, file(bam), file(bai), gr, sex, type from cov_bam.join(meta_gatkcov, by:1).groupTuple(by:1)
 
 	output:
-		set file("${id}.standardizedCR.tsv"), file("${id}.denoisedCR.tsv") into cov_plot, cov_gens
+		set id, file("${id}.standardizedCR.tsv"), file("${id}.denoisedCR.tsv") into cov_gens
+
+
+	script:
+		tumor_idx = type.findIndexOf{ it == 'tumor' }
+		normal_idx = type.findIndexOf{ it == 'normal' }
+
 
 	"""
 	source activate gatk4-env
 
-	gatk CollectReadCounts \
-		-I $bam -L $params.COV_INTERVAL_LIST \
-		--interval-merging-rule OVERLAPPING_ONLY -O ${bam}.hdf5
+	gatk CollectReadCounts \\
+		-I ${bam[tumor_idx]} -L $params.COV_INTERVAL_LIST \\
+		--interval-merging-rule OVERLAPPING_ONLY -O ${bam[tumor_idx]}.hdf5
 
-	gatk --java-options "-Xmx12g" DenoiseReadCounts \
-		-I ${bam}.hdf5 --count-panel-of-normals ${PON[sex]} \
-		--standardized-copy-ratios ${id}.standardizedCR.tsv \
-		--denoised-copy-ratios ${id}.denoisedCR.tsv
+	gatk --java-options "-Xmx12g" DenoiseReadCounts \\
+		-I ${bam[tumor_idx]}.hdf5 --count-panel-of-normals ${PON[sex[tumor_idx]]} \\
+		--standardized-copy-ratios ${id[tumor_idx]}.standardizedCR.tsv \\
+		--denoised-copy-ratios ${id[tumor_idx]}.denoisedCR.tsv
 
-	gatk PlotDenoisedCopyRatios \
-		--standardized-copy-ratios ${id}.standardizedCR.tsv \
-		--denoised-copy-ratios ${id}.denoisedCR.tsv \
-		--sequence-dictionary $params.GENOMEDICT \
-		--minimum-contig-length 46709983 --output . --output-prefix $id
+	gatk PlotDenoisedCopyRatios \\
+		--standardized-copy-ratios ${id[tumor_idx]}.standardizedCR.tsv \\
+		--denoised-copy-ratios ${id[tumor_idx]}.denoisedCR.tsv \\
+		--sequence-dictionary $params.GENOMEDICT \\
+		--minimum-contig-length 46709983 --output . --output-prefix ${id[tumor_idx]}
+
+	gatk --java-options "-Xmx50g" CollectAllelicCounts \\
+		-L $params.GATK_GNOMAD \\
+		-I ${bam[tumor_idx]} \\
+		-R $genome_file \\
+		-O ${id[tumor_idx]}.allelicCounts.tsv
+
+	gatk --java-options "-Xmx50g" CollectAllelicCounts \\
+		-L $params.GATK_GNOMAD \\
+		-I ${bam[normal_idx]} \\
+		-R $genome_file \\
+		-O ${id[normal_idx]}.allelicCounts.tsv
+
+	gatk --java-options "-Xmx40g" ModelSegments \\
+		--denoised-copy-ratios ${id[tumor_idx]}.denoisedCR.tsv \\
+		--allelic-counts ${id[tumor_idx]}.allelicCounts.tsv \\
+		--normal-allelic-counts ${id[normal_idx]}.allelicCounts.tsv \\
+		--minimum-total-allele-count-normal 20 \\
+		--output . \\
+		--output-prefix ${id[tumor_idx]}
+
+	gatk CallCopyRatioSegments \\
+		--input ${id[tumor_idx]}.cr.seg \\
+		--output ${id[tumor_idx]}.called.seg
+
+	gatk PlotModeledSegments \\
+		--denoised-copy-ratios ${id[tumor_idx]}.denoisedCR.tsv \\
+		--allelic-counts ${id[tumor_idx]}.hets.tsv \\
+		--segments ${id[tumor_idx]}.modelFinal.seg \\
+		--sequence-dictionary $params.GENOMEDICT \\
+		--minimum-contig-length 46709983 \\
+		--output . \\
+		--output-prefix ${id[tumor_idx]}
 	"""
 }
 
@@ -832,7 +790,7 @@ process generate_gens_data {
 	cpus 1
 
 	input:
-		set id, group, file(gvcf), g, type, sex, file(cov_stand), file(cov_denoise) from gvcf_gens.join(cov_gens, by:[1])
+		set id, file(gvcf), file(cov_stand), file(cov_denoise) from gvcf_gens.join(cov_gens)
 
 	output:
 		set file("${id}.cov.bed.gz"), file("${id}.baf.bed.gz"), file("${id}.cov.bed.gz.tbi"), file("${id}.baf.bed.gz.tbi")
