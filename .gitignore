@@ -5,3 +5,7 @@ nextflow.config
 work/
 *.html
 *#
+*.vcf
+*.vcf.gz
+*.fq.gz
+__test/
