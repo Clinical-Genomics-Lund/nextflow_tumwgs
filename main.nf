@@ -723,7 +723,7 @@ process gatkcov {
 		set id, group, file(bam), file(bai), gr, sex, type from cov_bam.join(meta_gatkcov, by:1).groupTuple(by:1)
 
 	output:
-		set id, file("${id}.standardizedCR.tsv"), file("${id}.denoisedCR.tsv") into cov_gens
+		set id, file("${id[tumor_idx]}.standardizedCR.tsv"), file("${id[tumor_idx]}.denoisedCR.tsv") into cov_gens
 
 
 	script:
