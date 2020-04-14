@@ -22,7 +22,7 @@ From:nfcore/base
 	rm -rf /var/lib/apt/lists/*
 	apt -y clean
 	apt -y update
-	apt -y install libz-dev build-essential gettext cmake libxml2-dev libcurl4-openssl-dev libssl-dev make libbz2-dev
+	apt -y install libz-dev build-essential gettext cmake libxml2-dev libcurl4-openssl-dev libssl-dev make libbz2-dev fonts-dejavu-core 
 	
 	mkdir /opt/bin
 

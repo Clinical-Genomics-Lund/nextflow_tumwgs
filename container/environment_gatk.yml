@@ -12,4 +12,5 @@ dependencies:
     - r-data.table=1.10.4
     - r-ggplot2=2.2.1
     - r-gplots=2.17.0
-    - r-gsalib=2.1    
+    - r-gsalib=2.1
+    - mscorefonts

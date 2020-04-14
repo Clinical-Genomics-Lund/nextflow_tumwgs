@@ -25,3 +25,4 @@ dependencies:
     - bioconda::pindel=0.2.5b9
     - r-base
     - perl-gd
+    - mscorefonts
