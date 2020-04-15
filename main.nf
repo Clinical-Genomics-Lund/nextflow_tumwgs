@@ -738,7 +738,7 @@ process gatkcov {
 		-I ${bam[tumor_idx]} -L $params.COV_INTERVAL_LIST \\
 		--interval-merging-rule OVERLAPPING_ONLY -O ${bam[tumor_idx]}.hdf5
 
-	gatk --java-options "-Xmx12g" DenoiseReadCounts \\
+	gatk --java-options "-Xmx50g" DenoiseReadCounts \\
 		-I ${bam[tumor_idx]}.hdf5 --count-panel-of-normals ${PON[sex[tumor_idx]]} \\
 		--standardized-copy-ratios ${id[tumor_idx]}.standardizedCR.tsv \\
 		--denoised-copy-ratios ${id[tumor_idx]}.denoisedCR.tsv
