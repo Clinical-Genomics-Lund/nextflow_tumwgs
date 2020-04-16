@@ -881,6 +881,7 @@ process manta{
 
 
 process annotate_manta {
+	publishDir "$OUTDIR/manta" , mode:'copy'
 	cpus 2
 	memory '8 GB'
 
@@ -888,7 +889,7 @@ process annotate_manta {
 		set group, file(vcf) from manta_vcf
 
 	output:
-		set group, file("${group}.manta.snpeff.vcf") from manta_vcf
+		set group, file("${group}.manta.snpeff.vcf")
 
 	"""
 	snpEff -Xmx4g -configOption data.dir=$params.SNPEFF_DIR GRCh37.75 \\
