@@ -724,7 +724,7 @@ process gatkcov {
 
 	output:
 		set id[tumor_idx], file("${id[tumor_idx]}.standardizedCR.tsv"), file("${id[tumor_idx]}.denoisedCR.tsv") into cov_gens
-
+		file("${id[tumor_idx]}.modeled.png")
 
 	script:
 		tumor_idx = type.findIndexOf{ it == 'tumor' }
