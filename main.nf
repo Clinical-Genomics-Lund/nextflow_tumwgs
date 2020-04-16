@@ -804,7 +804,9 @@ process generate_gens_data {
 //Somatic Variant Calling - Manat 
 process manta{
 	publishDir "$OUTDIR/manta" , mode:'copy'
-	cpus = 20 
+	cpus 20
+	memory '64 GB'
+
 	input: 
 		set val(gr), id, file(bam), file(bai) from manta_bam.groupTuple()
 		set val(group), smpl_id , val(type) from meta_manta.groupTuple()
@@ -814,7 +816,6 @@ process manta{
 
 	script:
 	
-	//options = paramsBED ? "--exome --callRegions ${params.targetsBED} " : ""
 	if( mode == "paired" ) {
 
 		Tumor_index = type.findIndexOf{ it == 'tumor' }
@@ -857,3 +858,18 @@ process manta{
 	}
 
 
+process annotate_manta {
+	cpus 2
+	memory '8 GB'
+
+	input:
+		set group, file(vcf) from manta_vcf
+
+	output:
+		set group, file("${group}.manta.snpeff.vcf") from manta_vcf
+
+	"""
+	snpEff -Xmx4g -configOption data.dir=$params.SNPEFF_DIR GRCh37.75 \\
+		$vcf > ${group}.manta.snpeff.vcf
+	"""
+}
