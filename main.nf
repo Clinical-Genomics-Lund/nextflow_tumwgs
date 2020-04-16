@@ -592,7 +592,7 @@ process aggregate_vcfs {
 		set g, id, type from meta_aggregate.groupTuple()
 
 	output:
-		set group, file("${group}.agg.vcf") into vcf_vep
+		set group, val(${id[tumor_idx]}), file("${group}.agg.vcf") into vcf_pon
 
 	script:
 		sample_order = id[0]
@@ -605,6 +605,28 @@ process aggregate_vcfs {
 	"""
 	aggregate_vcf.pl --vcf ${vcfs.sort(false) { a, b -> a.getBaseName() <=> b.getBaseName() }.join(",")} --sample-order ${sample_order} |vcf-sort -c > ${group}.agg.unsorted.vcf
 	vcf-sort -c ${group}.agg.unsorted.vcf > ${group}.agg.vcf
+	"""
+}
+
+process pon_filter {
+	publishDir "${OUTDIR}/vcf", mode: 'copy', overwrite: true
+	cpus 1
+	time '1h'
+
+	input:
+		set group, tumor_id, file(vcf) from vcf_pon
+
+	output:
+		set group, file("${group}.agg.pon.vcf") into vcf_vep
+
+	script:
+		def pons = []
+		if( params.PON_freebayes ) { pons.push("freebayes="+params.PON_freebayes) }
+		if( params.PON_vardict )   { pons.push("vardict="+params.PON_vardict) }
+		def pons_str = pons.join(",")
+
+	"""
+	filter_with_pon.pl --vcf $vcf --pons $pons_str --tumor-id $tumor_id > ${group}.agg.pon.vcf
 	"""
 }
 
@@ -694,7 +716,7 @@ process annotate_vep {
 		set group, file(vcf) from vcf_vep
 
 	output:
-		set group, file("${group}.agg.vep.vcf") into vcf_germline
+		set group, file("${group}.agg.pon.vep.vcf") into vcf_germline
 
 	"""
 	vep -i ${vcf} -o ${group}.agg.vep.vcf \\
