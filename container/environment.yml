@@ -11,6 +11,7 @@ dependencies:
     - bioconda::vcflib=1.0.0_rc2
     - bioconda::bcftools=1.9
     - bioconda::snpsift=4.3
+    - bioconda::snpeff=4.3.1t
     - bioconda::tabix=0.2.6
     - bioconda::htslib=1.9
     - bioconda::bedtools=2.29.0
