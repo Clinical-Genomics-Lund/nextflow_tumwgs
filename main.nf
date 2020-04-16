@@ -570,7 +570,7 @@ process concatenate_vcfs {
 		
 
 	output:
-        	set gr, vc, file("${gr}_${vc}.vcf.gz") into concatenated_vcfs
+		set gr, vc, file("${gr}_${vc}.vcf.gz") into concatenated_vcfs
 
 	"""
 	vcf-concat $vcfs | vcf-sort -c | gzip -c > ${vc}.concat.vcf.gz
@@ -723,7 +723,7 @@ process gatkcov {
 		set id, group, file(bam), file(bai), gr, sex, type from cov_bam.join(meta_gatkcov, by:1).groupTuple(by:1)
 
 	output:
-		set id[tumor_idx], file("${id[tumor_idx]}.standardizedCR.tsv"), file("${id[tumor_idx]}.denoisedCR.tsv") into cov_gens
+		set val("${id[tumor_idx]}"), file("${id[tumor_idx]}.standardizedCR.tsv"), file("${id[tumor_idx]}.denoisedCR.tsv") into cov_gens
 		file("${id[tumor_idx]}.modeled.png")
 
 	script:
