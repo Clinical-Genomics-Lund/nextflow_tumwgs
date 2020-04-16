@@ -592,7 +592,7 @@ process aggregate_vcfs {
 		set g, id, type from meta_aggregate.groupTuple()
 
 	output:
-		set group, val(${id[tumor_idx]}), file("${group}.agg.vcf") into vcf_pon
+		set group, val("${id[tumor_idx]}"), file("${group}.agg.vcf") into vcf_pon
 
 	script:
 		sample_order = id[0]
