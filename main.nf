@@ -716,10 +716,10 @@ process annotate_vep {
 		set group, file(vcf) from vcf_vep
 
 	output:
-		set group, file("${group}.agg.pon.vep.vcf") into vcf_germline
+		set group, file("${group}.agg.pon.vep.vcf") into vcf_panel
 
 	"""
-	vep -i ${vcf} -o ${group}.agg.vep.vcf \\
+	vep -i ${vcf} -o ${group}.agg.pon.vep.vcf \\
 		--offline --merged --everything --vcf --no_stats \\
 		--fork ${task.cpus} \\
 		--force_overwrite \\
@@ -731,6 +731,21 @@ process annotate_vep {
 	"""
 }
 
+process filter_with_panel_snv {
+	publishDir "${OUTDIR}/vcf", mode: 'copy', overwrite: true
+	cpus 1
+	time '1h'
+
+	input:
+		set group, file(vcf) from vcf_panel
+
+	output:
+		set group, file("${group}.agg.pon.vep.panel.vcf")
+
+	"""
+	filter_with_panel_snv.pl $vcf $params.PANEL_SNV > ${group}.agg.pon.vep.panel.vcf
+	"""
+}
 
 
 

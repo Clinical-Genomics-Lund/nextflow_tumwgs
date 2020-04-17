@@ -174,10 +174,16 @@ sub parse_variant {
     ( $var{ INFO }, $var{INFO_order} ) = parse_info( $var_data[7] );
 
     # Parse VEP annotation field, if any
-    if( $var{ INFO }->{ CSQ } ) {
+    if( $var{ INFO }->{ CSQ } ) {	
+        $var{_csqstr} = $var{ INFO }->{ CSQ };
 	$var{ INFO }->{ CSQ } = parse_VEP_CSQ( $var{INFO}->{CSQ}, $meta->{INFO}->{CSQ} );
     }
 
+    # Parse SnpEff annotation field, if any
+    if( $var{ INFO }->{ ANN } ) {
+	$var{ INFO }->{ ANN } = parse_SnpEff_ANN( $var{INFO}->{ANN}, $meta->{INFO}->{ANN} );
+    }
+    
     my @FORMAT = split /:/, $var_data[8];
     $var{ FORMAT} = \@FORMAT;
     
@@ -235,6 +241,36 @@ sub parse_VEP_CSQ {
 	    }
 	    else {
 		$data{ $field_names[$_] } = ( $values[$_] or "" );
+	    }
+	}
+
+	push( @data_transcripts, \%data )
+    }
+    return \@data_transcripts;
+}
+
+
+sub parse_SnpEff_ANN {
+    my( $ANN_var, $ANN_meta ) = @_;
+    #INFO=<ID=ANN,Number=.,Type=String,Description="Functional annotations: 'Allele | Annotation | Annotation_Impact | Gene_Name | Gene_ID | Feature_Type | Feature_ID | Transcript_BioType | Rank | HGVS.c | HGVS.p | cDNA.pos / cDNA.length | CDS.pos / CDS.length | AA.pos / AA.length | Distance | ERRORS / WARNINGS / INFO' ">
+    $ANN_meta->{Description} =~ /Functional annotations: '(.*?)'/;
+
+    my @field_names = split / \| /, $1;
+    
+    my @transcripts = split /,/, $ANN_var;
+
+    my @data_transcripts;
+    foreach my $transcript_ANN ( @transcripts ) {
+	my @values = split /\|/, $transcript_ANN;
+
+	my %data;
+	for( 0 .. $#field_names ) {
+	    if( $field_names[$_] eq "Annotation" ) {
+		my @conseq_array = split '&', $values[$_];
+		$data{ $field_names[$_] } = \@conseq_array;
+	    }
+	    else {
+		$data{ $field_names[$_] } = ($values[$_] or "");
 	    }
 	}
 
