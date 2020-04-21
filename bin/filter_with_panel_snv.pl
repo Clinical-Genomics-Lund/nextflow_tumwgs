@@ -19,8 +19,6 @@ system("zgrep ^#CHROM $vcf_fn");
 
 while ( my $v = $vcf->next_var() ) {
     if (is_in_panel($v, \%panel)) {
-	#	print Dumper($v);
-	print $v->{POS};
 	vcfstr($v);
     }
 }
