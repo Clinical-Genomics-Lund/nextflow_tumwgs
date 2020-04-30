@@ -181,6 +181,7 @@ sub parse_variant {
 
     # Parse SnpEff annotation field, if any
     if( $var{ INFO }->{ ANN } ) {
+        $var{_annstr} = $var{ INFO }->{ ANN };	
 	$var{ INFO }->{ ANN } = parse_SnpEff_ANN( $var{INFO}->{ANN}, $meta->{INFO}->{ANN} );
     }
     

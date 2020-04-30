@@ -904,10 +904,27 @@ process annotate_manta {
 		set group, file(vcf) from manta_vcf
 
 	output:
-		set group, file("${group}.manta.snpeff.vcf")
+		set group, file("${group}.manta.snpeff.vcf") into manta_vcf_fusion
 
 	"""
 	snpEff -Xmx4g -configOption data.dir=$params.SNPEFF_DIR GRCh37.75 \\
 		$vcf > ${group}.manta.snpeff.vcf
+	"""
+}
+
+process filter_with_panel_fusions {
+	publishDir "$OUTDIR/vcf" , mode:'copy'
+	cpus 2
+	memory '8 GB'
+	time '30m'
+
+	input:
+		set group, file(vcf) from manta_vcf_fusion
+
+	output:
+		set group, file("${group}.manta.fusions.vcf")
+
+	"""
+	filter_with_panel_fusion.pl $vcf $params.PANEL_FUS > ${group}.manta.fusions.vcf
 	"""
 }
