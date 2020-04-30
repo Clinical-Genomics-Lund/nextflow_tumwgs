@@ -16,15 +16,8 @@ genome_file = params.genome_file
 // VEP REFERENCES AND ANNOTATION DBS //
 CADD = params.CADD
 VEP_FASTA = params.VEP_FASTA
-MAXENTSCAN = params.MAXENTSCAN
 VEP_CACHE = params.VEP_CACHE
 GNOMAD = params.GNOMAD
-GERP = params.GERP
-PHYLOP =  params.PHYLOP
-PHASTCONS = params.PHASTCONS
-
-// ANNOTATION DBS GENERAL //
-CLINVAR = params.CLINVAR
 
 
 PON = [F: params.GATK_PON_FEMALE, M: params.GATK_PON_MALE]
@@ -329,7 +322,7 @@ process bqsr {
 		-t ${task.cpus} \\
 		-r $genome_file \\
 		-i $bam_neigh $shard \\
-		--algo QualCal -k $params.KNOWN1 -k $params.KNOWN2 ${shard_name}_${id}.bqsr.table
+		--algo QualCal -k $params.KNOWN1 ${shard_name}_${id}.bqsr.table
 	"""
 }
 
@@ -907,7 +900,7 @@ process annotate_manta {
 		set group, file("${group}.manta.snpeff.vcf") into manta_vcf_fusion
 
 	"""
-	snpEff -Xmx4g -configOption data.dir=$params.SNPEFF_DIR GRCh37.75 \\
+	snpEff -Xmx4g -configOption data.dir=$params.SNPEFF_DIR GRCh38.86 \\
 		$vcf > ${group}.manta.snpeff.vcf
 	"""
 }
@@ -925,6 +918,6 @@ process filter_with_panel_fusions {
 		set group, file("${group}.manta.fusions.vcf")
 
 	"""
-	filter_with_panel_fusion.pl $vcf $params.PANEL_FUS > ${group}.manta.fusions.vcf
+	filter_with_panel_fusions.pl $vcf $params.PANEL_FUS > ${group}.manta.fusions.vcf
 	"""
 }
