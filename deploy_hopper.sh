@@ -1,5 +1,5 @@
 DIR="$( cd "$( dirname "${BASH_SOURCE[0]}" )" >/dev/null 2>&1 && pwd )"
-1;5202;0c
+
 LATEST_CONTAINER_BUILD="$( ls -t $DIR/container/tumwgs_*.sif |head -n1)"
 CONTAINER_BASENAME=${LATEST_CONTAINER_BUILD##*/}
 PIPELINE_DEST="/fs1/pipelines/wgs_tumor"
@@ -25,4 +25,5 @@ scp $DIR/configs/nextflow.hopper.hg38.config $DEST_HOST:$PIPELINE_DEST/nextflow.
 
 # Copy other files
 scp $DIR/shards.csv $DEST_HOST:$PIPELINE_DEST
+scp $DIR/shards_38.csv $DEST_HOST:$PIPELINE_DEST
 scp -r $DIR/bin $DEST_HOST:$PIPELINE_DEST
