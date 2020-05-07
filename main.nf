@@ -755,6 +755,7 @@ process gatkcov {
 	output:
 		set val("${id[tumor_idx]}"), file("${id[tumor_idx]}.standardizedCR.tsv"), file("${id[tumor_idx]}.denoisedCR.tsv") into cov_gens
 		file("${id[tumor_idx]}.modeled.png")
+		set id, group, file("${id[tumor_idx]}.called.seg") into cnvs_annotate
 
 	script:
 		tumor_idx = type.findIndexOf{ it == 'tumor' }
@@ -811,6 +812,40 @@ process gatkcov {
 		--minimum-contig-length 46709983 \\
 		--output . \\
 		--output-prefix ${id[tumor_idx]}
+	"""
+}
+
+process cnvs_annotate {
+	publishDir "${OUTDIR}/cnv", mode: 'copy', overwrite: 'true'
+	tag "$group"
+	cpus 1
+	time '30m'
+	
+	input:
+		set id, group, file(segments) from cnvs_annotate
+
+	output:
+		set id, group, file("${id}.cnv.annotated.bed") into cnvs_filter
+
+	"""
+	overlapping_genes.pl $segments $params.GENE_BED_PC > ${id}.cnv.annotated.bed
+	"""
+}
+
+process panel_cnvs {
+	publishDir "${OUTDIR}/cnv", mode: 'copy', overwrite: 'true'
+	tag "$group"
+	cpus 1
+	time '30m'
+	
+	input:
+		set id, group, file(bed) from cnvs_filter
+
+	output:
+		set id, group, file("${id}.cnv.annotated.panel.bed") into cnvs_filter
+		
+	"""
+	filter_with_panel_cnv.pl $bed $params.PANEL_CNV > ${id}.cnv.annotated.panel.bed
 	"""
 }
 
