@@ -842,7 +842,7 @@ process panel_cnvs {
 		set id, group, file(bed) from cnvs_filter
 
 	output:
-		set id, group, file("${id}.cnv.annotated.panel.bed") into cnvs_filter
+		set id, group, file("${id}.cnv.annotated.panel.bed")
 		
 	"""
 	filter_with_panel_cnv.pl $bed $params.PANEL_CNV > ${id}.cnv.annotated.panel.bed
