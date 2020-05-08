@@ -322,7 +322,7 @@ process bqsr {
 		-t ${task.cpus} \\
 		-r $genome_file \\
 		-i $bam_neigh $shard \\
-		--algo QualCal -k $params.KNOWN1 ${shard_name}_${id}.bqsr.table
+		--algo QualCal -k $params.KNOWN ${shard_name}_${id}.bqsr.table
 	"""
 }
 
