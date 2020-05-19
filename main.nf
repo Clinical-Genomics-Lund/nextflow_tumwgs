@@ -604,6 +604,7 @@ process aggregate_vcfs {
 process pon_filter {
 	publishDir "${OUTDIR}/vcf", mode: 'copy', overwrite: true
 	cpus 1
+	memory '40 GB'
 	time '1h'
 
 	input:
@@ -755,7 +756,7 @@ process gatkcov {
 	output:
 		set val("${id[tumor_idx]}"), file("${id[tumor_idx]}.standardizedCR.tsv"), file("${id[tumor_idx]}.denoisedCR.tsv") into cov_gens
 		file("${id[tumor_idx]}.modeled.png")
-		set id, group, file("${id[tumor_idx]}.called.seg") into cnvs_annotate
+		set val("${id[tumor_idx]}"), group, file("${id[tumor_idx]}.called.seg") into cnvs_annotate
 
 	script:
 		tumor_idx = type.findIndexOf{ it == 'tumor' }
