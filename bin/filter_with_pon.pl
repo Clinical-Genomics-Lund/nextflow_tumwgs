@@ -7,6 +7,9 @@ use vcf2;
 use strict;
 use Data::Dumper;
 
+my $MAX_PON_FRAC = 0.05;
+
+
 # Get command line options
 my %opt = ();
 GetOptions( \%opt, 'vcf=s', 'tumor-id=s', 'pons=s' );
@@ -47,7 +50,7 @@ while ( my $var = $vcf->next_var() ) {
 	    my $p = $pon->{$varid};
 	    my $frac = $p->{num_non_germ} / $p->{total};
 
-	    if( $frac > 0.2 ) {
+	    if( $frac > $MAX_PON_FRAC ) {
 		if( $T_VAF < $p->{mean_vaf} + $p->{stdev_vaf}*2 ) {
 		    push @filters, "FAIL_PON_$vc";
 		    $remove_pass = 1;
@@ -55,6 +58,9 @@ while ( my $var = $vcf->next_var() ) {
 		else {
 		    push @filters, "WARN_PON_$vc";
 		}
+	    }
+	    elsif( $p->{num_non_germ} >= 2 ) { # Add warning for anything that is in the PON at least twice
+		push @filters, "WARN_PON_$vc";
 	    }
 	    add_info($var, "PON_NUM_$vc", $p->{num_non_germ}."/".$p->{total});
 	    add_info($var, "PON_VAFS_$vc", $p->{all});
