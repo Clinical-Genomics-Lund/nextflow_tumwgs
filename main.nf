@@ -120,7 +120,7 @@ process bwa_merge_shards {
 		set id, file("${id}_merged.bam"), file("${id}_merged.bam.bai") into merged_bam, qc_merged_bam
 
 	when:
-		params.shardbwa
+		params.align && params.shardbwa
     
 	script:
 		bams = shard.sort(false) { a, b -> a.getBaseName() <=> b.getBaseName() } .join(' ')
@@ -145,7 +145,7 @@ process bwa_align {
 		set id, file("${id}_merged.bam"), file("${id}_merged.bam.bai") into bam, qc_bam
 
 	when:
-		!params.shardbwa
+		params.align && !params.shardbwa
 
 	"""
 	sentieon bwa mem \\
@@ -260,18 +260,34 @@ process sentieon_qc {
 	output:
 		set id, file("${id}.QC") into qc_cdm
 
+
+	script:
+		target = ""
+		panel = ""
+		cov = "WgsMetricsAlgo wgs_metrics.txt"
+		assay = "wgs"
+		if( params.exome) {
+			target = "--interval $params.intervals"
+			panel = params.panelhs + "${bam}" + params.panelhs2 
+			cov = "CoverageMetrics --cov_thresh 1 --cov_thresh 10 --cov_thresh 30 --cov_thresh 100 --cov_thresh 250 --cov_thresh 500 cov_metrics.txt"
+			assay = "panel"
+		}
+		
 	"""
 	sentieon driver \\
-		-r $genome_file -t ${task.cpus} \\
+		-r $genome_file $target \\
+		-t ${task.cpus} \\
 		-i ${bam} \\
 		--algo MeanQualityByCycle mq_metrics.txt \\
 		--algo QualDistribution qd_metrics.txt \\
 		--algo GCBias --summary gc_summary.txt gc_metrics.txt \\
 		--algo AlignmentStat aln_metrics.txt \\
 		--algo InsertSizeMetricAlgo is_metrics.txt \\
-		--algo WgsMetricsAlgo wgs_metrics.txt
-	qc_sentieon.pl $id wgs > ${id}.QC
+		--algo $cov
+	$panel
+	qc_sentieon.pl $id $assay > ${id}.QC
 	"""
+
 }
 
 
@@ -279,7 +295,9 @@ process sentieon_qc {
 process qc_to_cdm {
 	cpus 1
 	publishDir "${CRONDIR}/qc", mode: 'copy' , overwrite: 'true'
-	
+
+	when:
+		!params.noupload
 	input:
 		set id, file(qc) from qc_cdm
 		set id, diagnosis, r1, r2 from qc_extra
@@ -293,7 +311,7 @@ process qc_to_cdm {
 		rundir = parts[0..idx].join("/")
 
 	"""
-	echo "--run-folder $rundir --sample-id $id --subassay $diagnosis --assay tumwgs --qc ${OUTDIR}/qc/${id}.QC" > ${id}.cdm
+	echo "--run-folder $rundir --sample-id $id --subassay $diagnosis --assay $params.assay  --qc ${OUTDIR}/qc/${id}.QC" > ${id}.cdm
 	"""
 }
 
@@ -381,7 +399,8 @@ process tnscope {
 	cpus 16
 	errorStrategy 'retry'
 	maxErrors 5
-
+	when:
+		params.varcall
 	input:
 		set id, bams_dummy, bai_dummy, bqsr, val(shard_name), val(shard), val(one), val(two), val(three), val(grid), file(bams), file(bai) from tnscope_bam_shards
 
@@ -438,7 +457,8 @@ process dnascope {
 	cpus 50
 	errorStrategy 'retry'
 	maxErrors 5
-
+	when:
+		params.varcall
 	input:
 		set gr, id, file(bam), file(bai) from dnascope_bam.groupTuple()
 		set group, smpl_id, type from meta_dnascope.groupTuple()
@@ -469,6 +489,8 @@ process freebayes {
 	errorStrategy 'retry'
 	maxErrors 5
 
+	when:
+		params.varcall
 	input:
 		set val(gr), id, file(bam), file(bai) from freebayes_bam.groupTuple()
 		set val(group), smpl_id , val(type) from meta_freebayes.groupTuple()
@@ -508,6 +530,9 @@ process vardict {
 	cpus 4
 	errorStrategy 'retry'
 	maxErrors 5
+
+	when:
+		params.varcall
 
 	input:
 		set gr, id, file(bam), file(bai) from vardict_bam.groupTuple()
@@ -668,7 +693,8 @@ process gvcf_combine {
 process split_normalize {
 	cpus 1
 	publishDir "${OUTDIR}/vcf", mode: 'copy', overwrite: 'true'
-
+	when:
+		params.annotate
 	input:
 		set group, file(vcf), file(idx) from combined_vcf
 
@@ -750,6 +776,9 @@ process gatkcov {
 	cpus 2
 	memory '64 GB'
 
+	when:
+		params.gatkcov && !params.exome
+	
 	input:
 		set id, group, file(bam), file(bai), gr, sex, type from cov_bam.join(meta_gatkcov, by:1).groupTuple(by:1)
 
@@ -821,7 +850,7 @@ process cnvs_annotate {
 	tag "$group"
 	cpus 1
 	time '30m'
-	
+
 	input:
 		set id, group, file(segments) from cnvs_annotate
 
@@ -838,7 +867,8 @@ process panel_cnvs {
 	tag "$group"
 	cpus 1
 	time '30m'
-	
+	when:
+		!params.exome
 	input:
 		set id, group, file(bed) from cnvs_filter
 
@@ -854,6 +884,9 @@ process generate_gens_data {
 	publishDir "${OUTDIR}/plot_data", mode: 'copy' , overwrite: 'true'
 	tag "$group"
 	cpus 1
+	
+	when:
+		!params.exome
 
 	input:
 		set id, file(gvcf), file(cov_stand), file(cov_denoise) from gvcf_gens.join(cov_gens)
@@ -873,6 +906,9 @@ process manta{
 	cpus 20
 	memory '64 GB'
 
+	when: 
+		params.sv && !params.exome
+	
 	input: 
 		set val(gr), id, file(bam), file(bai) from manta_bam.groupTuple()
 		set val(group), smpl_id , val(type) from meta_manta.groupTuple()
@@ -941,11 +977,14 @@ process annotate_manta {
 	"""
 }
 
-process filter_with_panel_fusions {
+?process filter_with_panel_fusions {
 	publishDir "$OUTDIR/vcf" , mode:'copy'
 	cpus 2
 	memory '8 GB'
 	time '30m'
+
+	when: 
+		!params.exome
 
 	input:
 		set group, file(vcf) from manta_vcf_fusion
