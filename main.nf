@@ -977,7 +977,7 @@ process annotate_manta {
 	"""
 }
 
-?process filter_with_panel_fusions {
+process filter_with_panel_fusions {
 	publishDir "$OUTDIR/vcf" , mode:'copy'
 	cpus 2
 	memory '8 GB'
