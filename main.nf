@@ -447,7 +447,7 @@ process dnascope {
 		set ID_Tumor, file("${ID_Tumor}_dnascope.vcf.gz") into gvcf_gens
 
 	script:
-		Tumor_index = type.findIndexOf{ it == 'tumor' }
+		Tumor_index = type.findIndexOf{ it == 'tumor' || it == 'T' }
 		ID_Tumor = smpl_id[Tumor_index]
 		tumor_index= id.findIndexOf{it == "$ID_Tumor" }
 		bam_tumor = bam[tumor_index]
@@ -479,12 +479,12 @@ process freebayes {
 		
 	script:
 		if( mode == "paired" ) {
-			Tumor_index = type.findIndexOf{ it == 'tumor' }
+			Tumor_index = type.findIndexOf{ it == 'tumor' || it == 'T' }
 			ID_Tumor = smpl_id[Tumor_index]
 			tumor_index= id.findIndexOf{it == "$ID_Tumor" }
 			bam_tumor = bam[tumor_index]
 
-			Normal_index = type.findIndexOf{ it == 'normal' }
+			Normal_index = type.findIndexOf{ it == 'normal' || it == 'N' }
 			ID_normal = smpl_id[Normal_index]
 			normal_index = id.findIndexOf{it == "$ID_normal" }
 			bam_normal = bam[normal_index]
@@ -521,12 +521,12 @@ process vardict {
 	script:
 		if( mode == "paired" ) {
 
-			Tumor_index = type.findIndexOf{ it == 'tumor' }
+			Tumor_index = type.findIndexOf{ it == 'tumor' || it == 'T'  }
 			ID_Tumor = smpl_id[Tumor_index]
 			tumor_index= id.findIndexOf{it == "$ID_Tumor" }
 			bam_tumor = bam[tumor_index]
 
-			Normal_index = type.findIndexOf{ it == 'normal' }
+			Normal_index = type.findIndexOf{ it == 'normal' || it == 'N' }
 			ID_normal = smpl_id[Normal_index] 
 			normal_index = id.findIndexOf{it == "$ID_normal" }
 			bam_normal = bam[normal_index]
@@ -759,8 +759,8 @@ process gatkcov {
 		set val("${id[tumor_idx]}"), group, file("${id[tumor_idx]}.called.seg") into cnvs_annotate
 
 	script:
-		tumor_idx = type.findIndexOf{ it == 'tumor' }
-		normal_idx = type.findIndexOf{ it == 'normal' }
+		tumor_idx = type.findIndexOf{ it == 'tumor' || it == 'T'  }
+		normal_idx = type.findIndexOf{ it == 'normal' || it == 'N'  }
 
 
 	"""
@@ -884,12 +884,12 @@ process manta{
 	
 	if( mode == "paired" ) {
 
-		Tumor_index = type.findIndexOf{ it == 'tumor' }
+		Tumor_index = type.findIndexOf{ it == 'tumor' || it == 'T' }
 		ID_Tumor = smpl_id[Tumor_index]
 		tumor_index= id.findIndexOf{it == "$ID_Tumor" }
 		bam_tumor = bam[tumor_index]
 
-		Normal_index = type.findIndexOf{ it == 'normal' }
+		Normal_index = type.findIndexOf{ it == 'normal' || it == 'N' }
 		ID_normal = smpl_id[Normal_index] 
 		normal_index = id.findIndexOf{it == "$ID_normal" }
 		bam_normal = bam[normal_index]
