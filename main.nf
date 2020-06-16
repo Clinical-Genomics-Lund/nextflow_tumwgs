@@ -49,6 +49,12 @@ Channel
 Channel
     .fromPath(params.csv)
     .splitCsv(header:true)
+    .map{ row-> tuple(row.group, row.type, row.clarity_sample_id, row.clarity_pool_id) }
+    .set { meta_coyote }
+
+Channel
+    .fromPath(params.csv)
+    .splitCsv(header:true)
     .map{ row-> tuple(row.group, row.id, row.type) }
     .into { meta_manta ; meta_concatVCF; meta_vardict; meta_freebayes; meta_dnascope; meta_aggregate}
 
@@ -734,7 +740,7 @@ process filter_with_panel_snv {
 		set group, file(vcf) from vcf_panel
 
 	output:
-		set group, file("${group}.agg.pon.vep.panel.vcf")
+		set group, file("${group}.agg.pon.vep.panel.vcf") into vcf_coyote
 
 	"""
 	filter_with_panel_snv.pl $vcf $params.PANEL_SNV > ${group}.agg.pon.vep.panel.vcf
@@ -755,7 +761,7 @@ process gatkcov {
 
 	output:
 		set val("${id[tumor_idx]}"), file("${id[tumor_idx]}.standardizedCR.tsv"), file("${id[tumor_idx]}.denoisedCR.tsv") into cov_gens
-		file("${id[tumor_idx]}.modeled.png")
+		file("${id[tumor_idx]}.modeled.png") into cnvplot_coyote
 		set val("${id[tumor_idx]}"), group, file("${id[tumor_idx]}.called.seg") into cnvs_annotate
 
 	script:
@@ -843,7 +849,7 @@ process panel_cnvs {
 		set id, group, file(bed) from cnvs_filter
 
 	output:
-		set id, group, file("${id}.cnv.annotated.panel.bed")
+		set id, group, file("${id}.cnv.annotated.panel.bed") into cnv_coyote
 		
 	"""
 	filter_with_panel_cnv.pl $bed $params.PANEL_CNV > ${id}.cnv.annotated.panel.bed
@@ -951,9 +957,37 @@ process filter_with_panel_fusions {
 		set group, file(vcf) from manta_vcf_fusion
 
 	output:
-		set group, file("${group}.manta.fusions.vcf")
+		set group, file("${group}.manta.fusions.vcf") into fusions_coyote
 
 	"""
 	filter_with_panel_fusions.pl $vcf $params.PANEL_FUS > ${group}.manta.fusions.vcf
+	"""
+}
+
+process coyote {
+	publishDir "${params.crondir}/coyote", mode: 'copy', overwrite: true
+	cpus 1
+	time '10m'
+
+	input:
+		set group, file(vcf), file(cnv), file(fusions) from vcf_coyote.join(cnv_coyote).join(fusions_coyote)
+		set g, type, lims_id, pool_id from meta_coyote.groupTuple()
+		set file(cnvplot) from cnvplot_coyote
+
+	output:
+		file("${group}.coyote_wgs")
+
+	script:
+		tumor_idx = type.findIndexOf{ it == 'tumor' || it == 'T' }
+
+	"""
+	echo "import_myeloid_to_coyote_vep_gms_dev.pl \\
+		--id $group --group tumwgs \\
+		--vcf /access/tumwgs/vcf/${vcf} \\
+		--cnv /access/tumwgs/cnv/${cnv} \\
+		--transloc /access/tumwgs/vcf/${fusions} \\
+		--cnvprofile /access/tumwgs/cov/${cnvplot} \\
+		--clarity-sample-id ${lims_id[tumor_idx]} \\
+		--clarity-pool-id ${pool_id[tumor_idx]}" > ${group}.coyote_wgs
 	"""
 }
