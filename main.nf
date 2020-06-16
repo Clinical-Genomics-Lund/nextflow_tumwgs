@@ -970,7 +970,7 @@ process coyote {
 	time '10m'
 
 	input:
-		set group, file(vcf), file(cnv), file(fusions) from vcf_coyote.join(cnv_coyote).join(fusions_coyote)
+		set group, file(vcf), foo, file(cnv), file(fusions) from vcf_coyote.join(cnv_coyote).join(fusions_coyote)
 		set g, type, lims_id, pool_id from meta_coyote.groupTuple()
 		file(cnvplot) from cnvplot_coyote
 
