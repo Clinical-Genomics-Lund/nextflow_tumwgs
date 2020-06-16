@@ -972,7 +972,7 @@ process coyote {
 	input:
 		set group, file(vcf), file(cnv), file(fusions) from vcf_coyote.join(cnv_coyote).join(fusions_coyote)
 		set g, type, lims_id, pool_id from meta_coyote.groupTuple()
-		set file(cnvplot) from cnvplot_coyote
+		file(cnvplot) from cnvplot_coyote
 
 	output:
 		file("${group}.coyote_wgs")
