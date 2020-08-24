@@ -743,7 +743,7 @@ process filter_with_panel_snv {
 		set group, file("${group}.agg.pon.vep.panel.vcf") into vcf_coyote
 
 	"""
-	filter_with_panel_snv.pl $vcf $params.PANEL_SNV > ${group}.agg.pon.vep.panel.vcf
+	filter_with_panel_snv.pl $vcf $params.PANEL_SNV 1 > ${group}.agg.pon.vep.panel.vcf
 	"""
 }
 

@@ -8,6 +8,7 @@ use Data::Dumper;
 #/fs1/results_dev/tumwgs/vcf/7992-19.agg.pon.vep.vcf
 my $vcf_fn = $ARGV[0];
 my $panel_fn = $ARGV[1];
+my $hard_filter = $ARGV[2] ? 1 : 0;
 
 my %panel = read_panel($panel_fn);
 
@@ -18,7 +19,7 @@ system("zgrep ^## $vcf_fn");
 system("zgrep ^#CHROM $vcf_fn");
 
 while ( my $v = $vcf->next_var() ) {
-    if (is_in_panel($v, \%panel)) {
+    if (is_in_panel($v, \%panel) or !$hard_filter) {
 	vcfstr($v);
     }
 }
