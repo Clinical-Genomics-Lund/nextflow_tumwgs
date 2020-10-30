@@ -287,8 +287,7 @@ process qc_to_cdm {
 	publishDir "${CRONDIR}/qc", mode: 'copy' , overwrite: 'true'
 	
 	input:
-		set id, file(qc) from qc_cdm
-		set id, diagnosis, r1, r2 from qc_extra
+		set id, file(qc), diagnosis, r1, r2 from qc_cdm.join(qc_extra)
 
 	output:
 		file("${id}.cdm") into cdm_done
