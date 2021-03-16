@@ -44,7 +44,7 @@ Channel
     .fromPath(params.csv)
     .splitCsv(header:true)
     .map{ row-> tuple(row.group, row.id, row.sex, row.type) }
-    .set { meta_gatkcov }
+    .into { meta_gatkcov; meta_gatkcov_baf }
 
 Channel
     .fromPath(params.csv)
@@ -355,7 +355,7 @@ process merge_dedup_bam {
 		set val(id), file(bams), file(bais) from all_dedup_bams4
 
 	output:
-		set group, id, file("${id}_merged_dedup.bam"), file("${id}_merged_dedup.bam.bai") into cov_bam, freebayes_bam, vardict_bam, manta_bam, dnascope_bam
+		set group, id, file("${id}_merged_dedup.bam"), file("${id}_merged_dedup.bam.bai") into cov_bam, covbaf_bam, freebayes_bam, vardict_bam, manta_bam, dnascope_bam
 
 	script:
 		bams_sorted_str = bams.sort(false) { a, b -> a.getBaseName().tokenize("_")[0] as Integer <=> b.getBaseName().tokenize("_")[0] as Integer } .join(' -i ')
@@ -746,10 +746,31 @@ process filter_with_panel_snv {
 	"""
 }
 
+process gatkcov_baf {
+	cpus 2
+	memory '64 GB'
 
+	input:
+                set id, group, file(bam), file(bai), gr, sex, type from covbaf_bam.join(meta_gatkcov_baf, by:1)
+
+
+	output:
+                set group, id, type, file("${id}.allelicCounts.tsv") into covbaf_call
+    
+	"""
+	source activate gatk4-env
+
+	gatk --java-options "-Xmx50g" CollectAllelicCounts \\
+		-L $params.GATK_GNOMAD \\
+		-I $bam \\
+		-R $genome_file \\
+		-O ${id}.allelicCounts.tsv
+	"""
+
+}
 
 // Create coverage profile using GATK
-process gatkcov {
+process gatkcov_count {
 	publishDir "${OUTDIR}/cov", mode: 'copy' , overwrite: 'true'    
     
 	cpus 2
@@ -759,14 +780,12 @@ process gatkcov {
 		set id, group, file(bam), file(bai), gr, sex, type from cov_bam.join(meta_gatkcov, by:1).groupTuple(by:1)
 
 	output:
+		set group, val("${id[tumor_idx]}"), file("${id[tumor_idx]}.standardizedCR.tsv"), file("${id[tumor_idx]}.denoisedCR.tsv") into covcount_call
 		set val("${id[tumor_idx]}"), file("${id[tumor_idx]}.standardizedCR.tsv"), file("${id[tumor_idx]}.denoisedCR.tsv") into cov_gens
-		file("${id[tumor_idx]}.modeled.png") into cnvplot_coyote
-		set val("${id[tumor_idx]}"), group, file("${id[tumor_idx]}.called.seg") into cnvs_annotate
+
 
 	script:
 		tumor_idx = type.findIndexOf{ it == 'tumor' || it == 'T'  }
-		normal_idx = type.findIndexOf{ it == 'normal' || it == 'N'  }
-
 
 	"""
 	source activate gatk4-env
@@ -785,18 +804,29 @@ process gatkcov {
 		--denoised-copy-ratios ${id[tumor_idx]}.denoisedCR.tsv \\
 		--sequence-dictionary $params.GENOMEDICT \\
 		--minimum-contig-length 46709983 --output . --output-prefix ${id[tumor_idx]}
+       """
+}
 
-	gatk --java-options "-Xmx50g" CollectAllelicCounts \\
-		-L $params.GATK_GNOMAD \\
-		-I ${bam[tumor_idx]} \\
-		-R $genome_file \\
-		-O ${id[tumor_idx]}.allelicCounts.tsv
+process gatkcov_call {
+	publishDir "${OUTDIR}/cov", mode: 'copy' , overwrite: 'true'    
+    
+	cpus 2
+	memory '64 GB'
 
-	gatk --java-options "-Xmx50g" CollectAllelicCounts \\
-		-L $params.GATK_GNOMAD \\
-		-I ${bam[normal_idx]} \\
-		-R $genome_file \\
-		-O ${id[normal_idx]}.allelicCounts.tsv
+	input:
+		set id, group, type, file(allelic), gr, file(stand), file(denoise) from covbaf_call.join(covcount_call, by:1, remainder:true).groupTuple(by:1)
+
+	output:
+		file("${id[tumor_idx]}.modeled.png") into cnvplot_coyote
+		set val("${id[tumor_idx]}"), group, file("${id[tumor_idx]}.called.seg") into cnvs_annotate
+
+	script:
+		tumor_idx = type.findIndexOf{ it == 'tumor' || it == 'T'  }
+		normal_idx = type.findIndexOf{ it == 'normal' || it == 'N'  }
+
+
+	"""
+	source activate gatk4-env
 
 	gatk --java-options "-Xmx40g" ModelSegments \\
 		--denoised-copy-ratios ${id[tumor_idx]}.denoisedCR.tsv \\
