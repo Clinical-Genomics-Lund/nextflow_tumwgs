@@ -25,7 +25,7 @@ while ( my $v = $vcf->next_var() ) {
     my @filters;
 
 
-    my( %likelihood, %gl_idx, %genotype, %altobs, %depth, %refobs, %alt_qualsum, %ref_qualsum);
+    my( %likelihood, %gl_idx, %genotype, %altobs, %depth );
     my $status = "PASS";
     for my $gt (@{$v->{GT}}) {
         my $type = "T";
@@ -43,19 +43,14 @@ while ( my $v = $vcf->next_var() ) {
 
 	my $DP = $gt->{DP};
 	my $RO = $gt->{RO};
-	my @QA = split /,/, ($gt->{QA} or "0");
-	my $QR = $gt->{QR};
 
 	# This gets the position of the genotype's likelihood value in the GL array
 	my $GL_IDX = ($GT[1]*($GT[1]+1)/2) + $GT[0];
 
 	$depth{$type}      = $DP;
 	$altobs{$type}     = \@AO;
-	$refobs{$type}     = $RO;
 	$genotype{$type}   = \@GT;
 	$likelihood{$type} = \@GL;
-	$alt_qualsum{$type} = \@QA;
-	$ref_qualsum{$type} = $QR;
 	$gl_idx{$type} = $GL_IDX;
     }
 
@@ -68,7 +63,6 @@ while ( my $v = $vcf->next_var() ) {
 	if( $genotype{T}->[0] eq $genotype{T}->[1] && ( $genotype{T}->[1] eq $genotype{N}->[0] or $genotype{T}->[1] eq $genotype{N}->[1] ) ) {
 	    $status = "LOH";
 	}
-
 	
 	# Fail if low somatic score
 	$status = "FAIL_QUAL" if $DQUAL<$SSC_THRES;
@@ -85,17 +79,6 @@ while ( my $v = $vcf->next_var() ) {
 	    $status = "WARN_NOVAR" if $TALT eq "0";
 	}
 	
-
-	# Fail if average base qual score is much lower for ALT than for REF 
-	if( $ref_qualsum{T} ) {
-	    my $avg_qual_ref = $ref_qualsum{T}/$refobs{T};
-	    my $avg_qual_alt = $alt_qualsum{T}->[$TALT-1] / $altobs{T}->[$TALT-1];
-	    my $refalt_qratio = $avg_qual_ref/$avg_qual_alt;
-	    add_info( $v, "RA_Qratio", $refalt_qratio);
-	    $status = "FAIL_LOWALTQ" if $refalt_qratio >= 2.5;
-	    $status = "FAIL_LOWALTQ" if $refalt_qratio >= 1.8 and $avg_qual_alt < 17;
-	}
-	
 	
 	# Fail if difference between tumor's and normal's VAF is < 3x.
 	if( $depth{N} > 0 and $depth{T} > 0 ) {
@@ -110,27 +93,13 @@ while ( my $v = $vcf->next_var() ) {
 	    }
 	    
 	}
-
-	# Warn if variant was only found on one strand
-	if( $status !~ /^FAIL/) {
-	    my @SAF = split /,/, $v->{INFO}->{SAF};
-	    my @SAR = split /,/, $v->{INFO}->{SAR};
-	    $status = "WARN_STRAND.$status" if $SAF[$TALT-1] == 0 or $SAR[$TALT-1] == 0;
-	}
-	
-
-	
-	add_info( $v, "SSC", $DQUAL );
-
-
+	add_info( $v, "SSC", $DQUAL );    
     }
 
     $v->{FILTER} = $status;
 
-    
+
     vcfstr($v);
-
-
 }
 
 
