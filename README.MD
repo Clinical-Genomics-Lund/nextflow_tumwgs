@@ -6,6 +6,7 @@ The main script for running the pipeline is "main.nf". You have to change the co
 
 
 ```console
+~$ ml singularity Java nextflow/21.10.6
 ~$ nextflow run main.nf -profile hopper \
     --panel all \
     -csv sample.csv \ 
@@ -20,6 +21,7 @@ The main script for running the pipeline is "main.nf". You have to change the co
 **Running the "solid" pipeline**
 
 ```console
+~$ ml singularity Java nextflow/21.10.6
 ~$ nextflow run main.nf -profile hopper \
     --panel solid \
     -csv sample.csv \ 
@@ -60,4 +62,3 @@ Then running the pipeline from our own `start_nextflow_analysis.pl`starter with 
 
 ```
  In our production server the bash script for the individual file and the csv files are automatically generated thereby nextflow script is activated upon availability of the csv and shell scripts.
-  
