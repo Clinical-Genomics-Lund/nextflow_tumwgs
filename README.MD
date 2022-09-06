@@ -4,13 +4,60 @@ The main script for running the pipeline is "main.nf". You have to change the co
 
 **Running the "ALL" pipeline**
 
-```
-nextflow run main.nf -profile hopper --panel all -csv sample.csv --queue grace-normal -with-singularity ~/path/to/container/tumwgs_2022-02-08.sif -with-report /path/to/workdir/nextflow/reports/sample.tumwgs-all.report.html -with-trace /path/to/workdir/nextflow/reports/sample.tumwgs-all.trace.txt -with-timeline /path/to/workdir/nextflow//reports/sample.tumwgs-all.timeline.html -work-dir /path/to/workdir/nextflow/nextflow//val-6883-19.tumwgs-all
+
+```console
+~$ nextflow run main.nf -profile hopper \
+    --panel all \
+    -csv sample.csv \ 
+    --queue grace-normal \
+    -with-singularity ~/path/to/container/tumwgs_2022-02-08.sif \
+    -with-report /path/to/workdir/nextflow/reports/sample.tumwgs-all.report.html \
+    -with-trace /path/to/workdir/nextflow/reports/sample.tumwgs-all.trace.txt \
+    -with-timeline /path/to/workdir/nextflow//reports/sample.tumwgs-all.timeline.html \
+    -work-dir /path/to/workdir/nextflow/nextflow//val-6883-19.tumwgs-all
 ```
 
+**Running the "solid" pipeline**
 
-**Running the "solid" pipeline*
+```console
+~$ nextflow run main.nf -profile hopper \
+    --panel solid \
+    -csv sample.csv \ 
+    --queue grace-normal \
+    -with-singularity ~/path/to/container/tumwgs_2022-02-08.sif \
+    -with-report /path/to/workdir/nextflow/reports/sample.tumwgs-all.report.html \
+    -with-trace /path/to/workdir/nextflow/reports/sample.tumwgs-all.trace.txt \
+    -with-timeline /path/to/workdir/nextflow//reports/sample.tumwgs-all.timeline.html \
+    -work-dir /path/to/workdir/nextflow/nextflow//val-6883-19.tumwgs-all
+```
+
+But ofcourse if you have already defined these pipelines in `pipeline_files.config` defined as follows:
 
 ```
-nextflow run main.nf -profile hopper --panel solid -csv sample.csv --queue grace-normal -with-singularity ~/path/to/container/tumwgs_2022-02-08.sif -with-report /path/to/workdir/nextflow/reports/sample.tumwgs-all.report.html -with-trace /path/to/workdir/nextflow/reports/sample.tumwgs-all.trace.txt -with-timeline /path/to/workdir/nextflow//reports/sample.tumwgs-all.timeline.html -work-dir /path/to/workdir/nextflow/nextflow//val-6883-19.tumwgs-all
+[tumwgs-all]
+pipeline = /fs1/saile/prj/nextflow_tumwgs_dev_v2.0/main.nf -profile hopper --panel all
+container = /fs1/saile/prj/nextflow_tumwgs_dev_v2.0/container/tumwgs_2022-02-08.sif
+singularity_version = 3.8.0
+nextflow_version = 21.04.2
+executor = slurm
+cluster = grace
+queue = normal
+
+[tumwgs-solid]
+pipeline = /fs1/saile/prj/nextflow_tumwgs_dev_v2.0/main.nf -profile hopper --panel solid
+container = /fs1/saile/prj/nextflow_tumwgs_dev_v2.0/container/tumwgs_2022-02-08.sif
+singularity_version = 3.8.0
+nextflow_version = 21.04.2
+executor = slurm
+cluster = grace
+queue = normal
 ```
+
+Then running the pipeline from our own `start_nextflow_analysis.pl`starter with the bash script is as follows:
+
+```console
+~$ /path/to/your/start_nextflow_analysis.pl sample.csv
+
+```
+ In our production server the bash script for the individual file and the csv files are automatically generated thereby nextflow script is activated upon availability of the csv and shell scripts.
+  
