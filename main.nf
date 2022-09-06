@@ -1,1025 +1,505 @@
 #!/usr/bin/env nextflow
 
-// GENERAL PATHS //
-OUTDIR = params.outdir+'/'+params.subdir
-CRONDIR = params.crondir
+/*
+* 'TumWgs' - A tumor whole genome sequencing pipeline that takes use senteion genomic distributed workflow  mode.   
+*/ 
 
-// SENTIEON CONFIGS //
-K_size      = 100000000
+nextflow.enable.dsl = 2
+
+/*
+* General parameters 
+*/
+
+
+
+log.info """\
+======================================================================
+TUMWGS -NF v2
+======================================================================
+outdir                  :       $params.outdir
+subdir                  :       $params.subdir
+crondir                 :       $params.crondir
+genome                  :       $params.genome_file
+csv                     :       $params.csv
+panel                   :       $params.panel
+bwa_num_shards          :       $params.bwa_shards
+genome_num              :       $params.genomic_shards_num
+PON_freebayes           :       $params.PON_freebayes
+PON_vardict             :       $params.PON_vardict
+Intersect_bed           :       $params.intersect_bed
+CADD                    :       $params.CADD 
+VEP_FASTA               :       $params.VEP_FASTA
+VEP_CACHE               :       $params.VEP_CACHE
+GNOMAD                  :       $params.GNOMAD
+SNV_HARD_FILTER         :       $params.SNV_HARD_FILTER
+=====================================================================
+"""
+
+/*
+* Import modules
+*/
+
+include {   COPY_FASTQ;
+            BWA_ALIGN_SHARDED;
+            DELETE_FASTQ;
+            BWA_MERGE_SHARDS;
+            BAM_CRAM_ALL;
+            LOCUS_COLLECTOR;
+            DEDUP;
+            DEDUP_METRICS_MERGE;
+            SENTIEON_QC;
+            BQSR;
+            MERGE_BQSR;
+            MERGE_DEDUP_CRAM;
+            QC_TO_CDM;
+            TNSCOPE;
+            MERGE_VCF;
+            DNASCOPE_TUM;
+            DNASCOPE_NOR;
+            FREEBAYES;
+            VARDICT;
+            CONCATENATE_VCFS;
+            AGGREGATE_VCFS;
+            PON_FILTER;
+            GVCF_COMBINE;
+            SPLIT_NORMALIZE;
+            INTERSECT;
+            ANNOTATE_VEP;
+            FILTER_WITH_PANEL_SNV;
+            MANTA;
+            ANNOTATE_MANTA;
+            FILTER_WITH_PANEL_FUSIONS;
+            GATKCOV_BAF;
+            GATKCOV_COUNT_TUM;
+            GATKCOV_CALL_TUM;
+            GATKCOV_COUNT_NOR;
+            GATKCOV_CALL_NOR;
+            CNVS_ANNOTATE;
+            FILTER_WITH_PANEL_CNVS;
+            GENERATE_GENS_DATA;
+            GENERATE_GENS_DATA_NOR;
+            COYOTE
+        } from './modules/sentieon/main.nf' params(params) 
+    
+
+/*  Subworkflows for the pipelines could be made modular  */
+
+workflow sentieon_workflow {            
+    take:
+        K_size
+        genomeShards
+        bwa_num_shards
+        bwa_shards
+        fastq_sharded
+
+    main:
+     
+    if (params.copy) {
+         COPY_FASTQ (    fastq_sharded   )
+         BWA_ALIGN_SHARDED ( K_size, 
+                            bwa_num_shards,
+                            bwa_shards.combine(COPY_FASTQ.out)   )
+         BWA_MERGE_SHARDS (  BWA_ALIGN_SHARDED.out.groupTuple()  )
+         DELETE_FASTQ ( BWA_MERGE_SHARDS.out, COPY_FASTQ.out )
+        } else {
+         BWA_ALIGN_SHARDED ( K_size, 
+                            bwa_num_shards,
+                            bwa_shards.combine(fastq_sharded)   )
+         BWA_MERGE_SHARDS (  BWA_ALIGN_SHARDED.out.groupTuple()  )
+        }
+        BAM_CRAM_ALL (  params.genome_file,
+                        BWA_MERGE_SHARDS.out.groupTuple()    )        
+        
+        LOCUS_COLLECTOR (   params.genome_file,
+                            BAM_CRAM_ALL.out.combine(shards)    )
+
+        dedupInput  =   LOCUS_COLLECTOR.out.groupTuple().join(BAM_CRAM_ALL.out).combine(shards)
+        DEDUP ( params.genome_file, dedupInput )
+        
+        dedupMetricesInput  =   DEDUP.out[1].groupTuple()
+        DEDUP_METRICS_MERGE ( dedupMetricesInput  )
+
+        SENTIEON_QC (   params.genome_file, 
+                        BAM_CRAM_ALL.out.join(DEDUP_METRICS_MERGE.out))
+
+        bqsrInput = DEDUP.out[0].groupTuple().combine(shards)
+        BQSR (  genomeShards,
+                params.genome_file,
+                params.KNOWN,
+                bqsrInput   )
+
+        MERGE_BQSR (    BQSR.out.groupTuple()   )
+        MERGE_DEDUP_CRAM (  params.genome_file,
+                            DEDUP.out[0].groupTuple()   )
+
+    emit:
+        bam = BWA_MERGE_SHARDS.out
+        cram = MERGE_DEDUP_CRAM.out
+        dedup = DEDUP.out[0]
+        bqsr = MERGE_BQSR.out
+        sentieonqc = SENTIEON_QC.out
+
+}
+
+workflow cdm_qc_workflow {
+    take:
+        cron
+        sentieonqc
+    main:
+        QC_TO_CDM ( sentieonqc.join(cron)  )
+}
+
+workflow tnscope_workflow {
+    take:
+        genomeShards
+        metaid
+        bqsr
+        dedup
+        shards
+    main:
+        bqsr_1      =   bqsr.groupTuple().first()
+        bqsr_2      =   bqsr.groupTuple().last()
+        sample1     =   dedup.groupTuple().first()
+        sample2     =   dedup.groupTuple().last()
+        metaShards  =   shards.combine(metaId.groupTuple())
+        TNSCOPE (   genomeShards,
+                    metaShards,
+                    sample1,
+                    sample2,
+                    bqsr_1,
+                    bqsr_2,
+                    params.genome_file)
+        MERGE_VCF ( TNSCOPE.out.groupTuple()    )
+    
+    emit:
+        vcf  = MERGE_VCF.out
+        
+
+}
+
+workflow dnascope_tum_workflow {
+    take:
+        metaid
+        dedup
+    main:
+        sample1     =   dedup.groupTuple().first()
+        sample2     =   dedup.groupTuple().last()
+        DNASCOPE_TUM (  params.genome_file, 
+                        sample1,
+                        sample2,
+                        metaId.groupTuple() )
+    emit:
+        vcf = DNASCOPE_TUM.out
+}
+
+workflow dnascope_nor_workflow {
+    take:
+        metaid
+        dedup
+    main:
+        sample1     =   dedup.groupTuple().first()
+        sample2     =   dedup.groupTuple().last()
+        DNASCOPE_NOR (  params.genome_file, 
+                        sample1,
+                        sample2,
+                        metaId.groupTuple() )
+    emit:
+        vcf = DNASCOPE_NOR.out
+
+}
+
+workflow snv_calling_workflow {
+    take:
+        mode
+        beds
+        bam
+        tnVcf
+        fastq_sharded
+        metaId
+
+    main:
+        bed             =    beds.combine(metaId.groupTuple())
+        bamMerged       =    metaId.flatten().first().combine(bam).groupTuple()
+        all             =   bamMerged.combine(bed)
+
+        FREEBAYES ( mode, 
+                    all, 
+                    params.genome_file )
+        VARDICT ( mode, 
+                    all, 
+                    params.genome_file )
+
+        vcfPartFreebayes    =   FREEBAYES.out.groupTuple(by:[0,1])
+        vcfPartVardict      =   VARDICT.out.groupTuple(by:[0,1])    
+        vcfConcat           =   vcfPartFreebayes.mix(vcfPartVardict)
+        CONCATENATE_VCFS (  vcfConcat,
+                            params.genome_file  )
+        conVcfs             =   CONCATENATE_VCFS.out.groupTuple()
+        idMeta              =   metaId.groupTuple()
+        AGGREGATE_VCFS (    mode,
+                            conVcfs,
+                            idMeta  )
+        inputPonVcf         =   AGGREGATE_VCFS.out
+        PON_FILTER (    params.PON_freebayes,
+                        params.PON_vardict,
+                        inputPonVcf )
+        groupFasta          =   fastq_sharded.groupTuple() 
+        mergVcf             =   tnVcf.groupTuple()
+        
+        GVCF_COMBINE (  mode,
+                        groupFasta,
+                        mergVcf )
+
+        SPLIT_NORMALIZE (   params.genome_file, 
+                            GVCF_COMBINE.out )
+
+        INTERSECT ( params.intersect_bed, 
+                    SPLIT_NORMALIZE.out )
+
+        ANNOTATE_VEP (  params.CADD,
+                        params.VEP_FASTA,
+                        params.VEP_CACHE,
+                        params.GNOMAD,
+                        PON_FILTER.out
+                    )
+        def snv_panel = params.panels[params.panel]['PANEL_SNV']
+        FILTER_WITH_PANEL_SNV ( snv_panel,
+                                ANNOTATE_VEP.out )
+    emit:
+        ann_vcf = ANNOTATE_VEP.out
+        vcf     = FILTER_WITH_PANEL_SNV.out
+        
+}
+
+workflow sv_calling_workflow {
+    take:
+        mode
+        cram
+        metaId
+    main:
+        idManta                 =   metaId.groupTuple()
+        fileManta               =   metaId.flatten().first().combine(cram).groupTuple()
+        MANTA ( mode,
+                params.genome_file, 
+                idManta,
+                fileManta   )
+        ANNOTATE_MANTA (    params.SNPEFF_DIR,
+                            MANTA.out )
+
+        def fus_panel = params.panels[params.panel]['PANEL_FUS']    
+        FILTER_WITH_PANEL_FUSIONS ( fus_panel,
+                                    ANNOTATE_MANTA.out  )
+    emit:
+        vcf = FILTER_WITH_PANEL_FUSIONS.out
+
+}
+
+workflow cnv_calling_workflow {
+    take:
+        gatkid
+        cram
+     
+    main:
+        gatkBaf = metaId.flatten().first().combine(cram).join(gatkid, by:1)
+
+        GATKCOV_BAF (   params.GATK_GNOMAD ,
+                        params.genome_file ,
+                        gatkBaf )
+        gatkCovCount =  gatkBaf.groupTuple(by:1)
+
+        GATKCOV_COUNT_TUM ( params.COV_INTERVAL_LIST,
+                            params.GATK_PON_FEMALE,
+                            params.GATK_PON_MALE,
+                            params.GENOMEDICT,
+                            params.genome_file,
+                            gatkCovCount    )
+        gatkcovcall =  GATKCOV_BAF.out.join(GATKCOV_COUNT_TUM.out[0],  by:1, remainder:true).groupTuple(by:1)
+        GATKCOV_CALL_TUM (  params.GENOMEDICT,
+                            gatkcovcall  )
+
+        GATKCOV_COUNT_NOR ( params.COV_INTERVAL_LIST,
+                            params.GATK_PON_FEMALE,
+                            params.GATK_PON_MALE,
+                            params.GENOMEDICT,
+                            params.genome_file,
+                            gatkCovCount    )
+        gatkCovCallN =  GATKCOV_BAF.out.join(GATKCOV_COUNT_NOR.out[0],  by:1, remainder:true).groupTuple(by:1)
+        GATKCOV_CALL_NOR (  params.GENOMEDICT,
+                            gatkCovCallN   )
+                            
+        CNVS_ANNOTATE ( params.GENE_BED_PC,
+                        GATKCOV_CALL_TUM.out[1]  )
+
+        def cnv_panel = params.panels[params.panel]['PANEL_CNV']
+        FILTER_WITH_PANEL_CNVS (    cnv_panel, 
+                                    CNVS_ANNOTATE.out   )
+    
+    emit:
+        tumplot =   GATKCOV_CALL_TUM.out[0]
+        norplot =   GATKCOV_CALL_NOR.out[0]
+        tumCov  =   GATKCOV_COUNT_TUM.out[1]
+        norCov  =   GATKCOV_COUNT_NOR.out[1]
+        vcf =   FILTER_WITH_PANEL_CNVS.out
+}
+
+workflow gens_tum_workflow {
+    take:
+        gatkcovTum
+        dnascopeTum
+
+    main:
+        gens = dnascopeTum.join(gatkcovTum)
+        GENERATE_GENS_DATA ( params.GENS_GNOMAD, gens)
+}
+
+workflow gens_nor_workflow {
+    take:
+        gatkcovNor
+        dnascopeNor
+
+    main:
+        gensN = dnascopeNor.join(gatkcovNor)
+        GENERATE_GENS_DATA_NOR ( params.GENS_GNOMAD, gensN)
+}
+
+workflow coyote_workflow {
+    take:
+        metaCoyote
+        snvVcf
+        svVcf
+        cnvVcf
+        tumplot
+    main:
+        filteredData = snvVcf.join(cnvVcf).join(svVcf)
+
+    COYOTE (    filteredData,
+                metaCoyote.groupTuple(),
+                tumplot)
+}
+
+/*  Main Channel and workflow    */
+
+/* Channels */
+
 bwa_num_shards = params.bwa_shards
-bwa_shards = Channel.from( 0..bwa_num_shards-1 )
-genomic_num_shards = params.genomic_shards_num
+genomeShards   = params.genomic_shards_num
+K_size = 100000000
+mode =  file(params.csv).countLines() > 2 ? "paired" : "unpaired"
 
-// FASTA //
-genome_file = params.genome_file
-
-// VEP REFERENCES AND ANNOTATION DBS //
-CADD = params.CADD
-VEP_FASTA = params.VEP_FASTA
-VEP_CACHE = params.VEP_CACHE
-GNOMAD = params.GNOMAD
-
-
-PON = [F: params.GATK_PON_FEMALE, M: params.GATK_PON_MALE]
-
-group_id = "HEJ"
-
-csv = file(params.csv)
-mode = csv.countLines() > 2 ? "paired" : "unpaired"
-println(mode)
+Channel
+    .from( 0..bwa_num_shards-1)
+    .set { bwa_shards }
 
 Channel
     .fromPath(params.csv)
     .splitCsv(header:true)
     .map{ row-> tuple(row.group, row.id, file(row.read1), file(row.read2)) }
-    .into { fastq_sharded; fastq; vcf_info }
+    .set { fastq_sharded }
 
+Channel
+    .fromPath(params.genomic_shards_file)
+    .splitCsv(header:false)
+    .set { shards }
+    
 Channel
     .fromPath(params.csv)
     .splitCsv(header:true)
-    .map{ row-> tuple(row.id, row.diagnosis, row.read1, row.read2) }
-    .set{ qc_extra }
-
-Channel
-    .fromPath(params.csv)
-    .splitCsv(header:true)
-    .map{ row-> tuple(row.group, row.id, row.sex, row.type) }
-    .into { meta_gatkcov; meta_gatkcov_baf }
-
-Channel
-    .fromPath(params.csv)
-    .splitCsv(header:true)
-    .map{ row-> tuple(row.group, row.type, row.clarity_sample_id, row.clarity_pool_id) }
-    .set { meta_coyote }
+    .map{ row-> tuple(row.id, row.diagnosis, file(row.read1)) }
+    .set{ cron } 
 
 Channel
     .fromPath(params.csv)
     .splitCsv(header:true)
     .map{ row-> tuple(row.group, row.id, row.type) }
-    .into { meta_manta ; meta_concatVCF; meta_vardict; meta_freebayes; meta_dnascope; meta_aggregate}
+    .set { metaId }
 
-
-
-// Split bed file in to smaller parts to be used for parallel variant calling
 Channel
     .fromPath("${params.intersect_bed}")
     .ifEmpty { exit 1, "Regions bed file not found: ${params.intersect_bed}" }
     .splitText( by: 20000, file: 'bedpart.bed' )
-    .into { beds_freebayes; beds_vardict }
-
-
-
-if(genome_file ){
-    bwaId = Channel
-            .fromPath("${genome_file}.bwt")
-            .ifEmpty { exit 1, "BWA index not found: ${genome_file}.bwt" }
-}
-
+    .map { it -> [it.getBaseName().tokenize(".")[1],it] }
+    .set { beds }
 
 Channel
-    .fromPath(params.genomic_shards_file)
-    .splitCsv(header:false)
-    .into { shards1; shards2; shards3; shards4; shards5; }
+    .fromPath(params.csv)
+    .splitCsv(header:true)
+    .map{ row-> tuple(row.group, row.id, row.sex, row.type) }
+    .set { gatkId }
 
-// A channel to pair neighbouring bams and vcfs. 0 and top value removed later
-// Needs to be 0..n+1 where n is number of shards in shards.csv
 Channel
-    .from( 0..(genomic_num_shards+1) )
-    .collate( 3,1, false )
-    .into{ shardie1; shardie2 }
+    .fromPath(params.csv)
+    .splitCsv(header:true)
+    .map{ row-> tuple(row.group, row.id, row.type, row.clarity_sample_id, row.clarity_pool_id) }
+    .set { metaCoyote }
 
 
-// Align fractions of fastq files with BWA
-process bwa_align_sharded {
-	cpus 50
-	memory '64 GB'
+/*  Main workflow  */
+workflow {
 
-	input:
-		set val(shard), val(group), val(id), r1, r2 from bwa_shards.combine(fastq_sharded)
+    sentieon_workflow (  K_size,
+                        genomeShards,
+                        bwa_num_shards, 
+                        bwa_shards, 
+                        fastq_sharded)
+    cdm_qc_workflow (   cron, 
+                        sentieon_workflow.out.sentieonqc )
+    tnscope_workflow (  genomeShards,
+                        metaId,
+                        sentieon_workflow.out.bqsr,
+                        sentieon_workflow.out.dedup,
+                        shards )
+    dnascope_tum_workflow ( metaId,
+                            sentieon_workflow.out.dedup )
+    dnascope_nor_workflow ( metaId,
+                            sentieon_workflow.out.dedup )
+    snv_calling_workflow (  mode,
+                            beds,
+                            sentieon_workflow.out.bam,
+                            tnscope_workflow.out.vcf,
+                            fastq_sharded,
+                            metaId  )
+    sv_calling_workflow (   mode,
+                            sentieon_workflow.out.cram,
+                            metaId)
+    cnv_calling_workflow (  gatkId,
+                            sentieon_workflow.out.cram    )
 
-	output:
-		set val(id), file("${id}_${shard}.bwa.sort.bam"), file("${id}_${shard}.bwa.sort.bam.bai") into bwa_shards_ch
+    gens_tum_workflow (cnv_calling_workflow.out.tumCov,        dnascope_tum_workflow.out.vcf )                   
 
-	when:
-		params.shardbwa
+    gens_nor_workflow ( cnv_calling_workflow.out.norCov,            dnascope_nor_workflow.out.vcf  ) 
 
-	"""
-	sentieon bwa mem -M \\
-		-R '@RG\\tID:${id}\\tSM:${id}\\tPL:illumina' \\
-		-K $K_size \\
-		-t ${task.cpus} \\
-		-p $genome_file '<sentieon fqidx extract -F $shard/$bwa_num_shards -K $K_size $r1 $r2' | sentieon util sort \\
-		-r $genome_file \\
-		-o ${id}_${shard}.bwa.sort.bam \\
-		-t ${task.cpus} --sam2bam -i -
-	"""
-}
+    coyote_workflow (   metaCoyote,
+                        snv_calling_workflow.out.vcf,
+                        sv_calling_workflow.out.vcf,
+                        cnv_calling_workflow.out.vcf,
+                        cnv_calling_workflow.out.tumplot )    
 
-// Merge the fractioned bam files
-process bwa_merge_shards {
-	cpus 50
-
-	input:
-		set val(id), file(shard), file(shard_bai) from bwa_shards_ch.groupTuple()
-
-	output:
-		set id, file("${id}_merged.bam"), file("${id}_merged.bam.bai") into merged_bam, qc_merged_bam
-
-	when:
-		params.shardbwa
     
-	script:
-		bams = shard.sort(false) { a, b -> a.getBaseName() <=> b.getBaseName() } .join(' ')
-
-	"""
-	sentieon util merge -o ${id}_merged.bam ${bams}
-	"""
 }
 
-// ALTERNATIVE PATH: Unsharded BWA, utilize local scratch space.
-process bwa_align {
-	cpus 27
-	memory '64 GB'
-	scratch true
-	stageInMode 'copy'
-	stageOutMode 'copy'
-
-	input:
-		set val(group), val(id), file(r1), file(r2) from fastq
-
-	output:
-		set id, file("${id}_merged.bam"), file("${id}_merged.bam.bai") into bam, qc_bam
-
-	when:
-		!params.shardbwa
-
-	"""
-	sentieon bwa mem \\
-		-M \\
-		-R '@RG\\tID:${id}\\tSM:${id}\\tPL:illumina' \\
-		-t ${task.cpus} \\
-		$genome_file $r1 $r2 \\
-		| sentieon util sort \\
-		-r $genome_file \\
-		-o ${id}_merged.bam \\
-		-t ${task.cpus} --sam2bam -i -
-	"""
-}
-
-
-
-// Collect information that will be used by to remove duplicate reads.
-// The output of this step needs to be uncompressed (Sentieon manual uses .gz)
-// or the command will occasionally crash in Sentieon 201808.07 (works in earlier)
-process locus_collector {
-	cpus 16
-	errorStrategy 'retry'
-	maxErrors 5
-
-	input:
-		set id, file(bam), file(bai), val(shard_name), val(shard) from bam.mix(merged_bam).combine(shards1)
-
-	output:
-		set val(id), file("${shard_name}_${id}.score"), file("${shard_name}_${id}.score.idx") into locus_collector_scores
-		set val(id), file(bam), file(bai) into merged_bam_id
-
-	"""
-	sentieon driver \\
-		-t ${task.cpus} \\
-		-i $bam $shard \\
-		--algo LocusCollector \\
-		--fun score_info ${shard_name}_${id}.score
-	"""
-}
-
-
-
-locus_collector_scores
-    .groupTuple()
-    .join(merged_bam_id)
-    .combine(shards2)
-    .set{ all_scores }
-
-
-// Remove duplicate reads
-process dedup {
-	cpus 16
-	cache 'deep'
-	errorStrategy 'retry'
-	maxErrors 5
-
-	input:
-		set val(id), file(score), file(idx), file(bam), file(bai), val(shard_name), val(shard) from all_scores
-
-	output:
-		set val(id), file("${shard_name}_${id}.bam"), file("${shard_name}_${id}.bam.bai") into shard_dedup_bam
-		set val(group_id), file("${shard_name}_${id}.bam"), file("${shard_name}_${id}.bam.bai") into tndnascope_bams
-		set id, file("${shard_name}_${id}_dedup_metrics.txt") into dedup_metrics
-
-	script:
-		scores = score.sort(false) { a, b -> a.getBaseName().tokenize("_")[0] as Integer <=> b.getBaseName().tokenize("_")[0] as Integer } .join(' --score_info ')
-
-	"""
-	sentieon driver \\
-		-t ${task.cpus} \\
-		-i $bam $shard \\
-		--algo Dedup --score_info $scores \\
-		--metrics ${shard_name}_${id}_dedup_metrics.txt \\
-		--rmdup ${shard_name}_${id}.bam
-	"""
-
-}
-
-shard_dedup_bam
-    .groupTuple()
-    .into{ all_dedup_bams1; all_dedup_bams2; all_dedup_bams4 }
-
-
-//merge shards with shard combinations
-shards3
-    .merge(tuple(shardie1))
-    .into{ shard_shard; shard_shard2 }
-
-process dedup_metrics_merge {
-
-	input:
-		set id, file(dedup) from dedup_metrics.groupTuple()
-
-	output:
-		set id, file("dedup_metrics.txt") into merged_dedup_metrics
-
-	"""
-	sentieon driver --passthru --algo Dedup --merge dedup_metrics.txt $dedup
-	"""
-}
-
-
-//Collect various QC data: TODO MOVE qc_sentieon to container!
-process sentieon_qc {
-	cpus 54
-	memory '64 GB'
-	publishDir "${OUTDIR}/qc", mode: 'copy' , overwrite: 'true'
-
-	input:
-		set id, file(bam), file(bai), file(dedup) from qc_bam.mix(qc_merged_bam).join(merged_dedup_metrics)
-
-	output:
-		set id, file("${id}.QC") into qc_cdm
-
-	"""
-	sentieon driver \\
-		-r $genome_file -t ${task.cpus} \\
-		-i ${bam} \\
-		--algo MeanQualityByCycle mq_metrics.txt \\
-		--algo QualDistribution qd_metrics.txt \\
-		--algo GCBias --summary gc_summary.txt gc_metrics.txt \\
-		--algo AlignmentStat aln_metrics.txt \\
-		--algo InsertSizeMetricAlgo is_metrics.txt \\
-		--algo WgsMetricsAlgo wgs_metrics.txt
-	qc_sentieon.pl $id wgs > ${id}.QC
-	"""
-}
-
-
-// Load QC data into CDM (via middleman)
-process qc_to_cdm {
-	cpus 1
-	publishDir "${CRONDIR}/qc", mode: 'copy' , overwrite: 'true'
-	
-	input:
-		set id, file(qc), diagnosis, r1, r2 from qc_cdm.join(qc_extra)
-
-	output:
-		file("${id}.cdm") into cdm_done
-
-	script:
-		parts = r1.split('/')
-		idx =  parts.findIndexOf {it ==~ /......_......_...._........../}
-		rundir = parts[0..idx].join("/")
-
-	"""
-	echo "--run-folder $rundir --sample-id $id --subassay $diagnosis --assay tumwgs --qc ${OUTDIR}/qc/${id}.QC" > ${id}.cdm
-	"""
-}
-
-
-
-process bqsr {
-	cpus 16
-	errorStrategy 'retry'
-	maxErrors 5
-
-	input:
-		set val(id), file(bams), file(bai), val(shard_name), val(shard), val(one), val(two), val(three) from all_dedup_bams1.combine(shard_shard)
-
-	output:
-		set val(id), file("${shard_name}_${id}.bqsr.table") into bqsr_table
-
-	script:
-		combo = [one, two, three]
-		combo = (combo - 0) //first dummy value
-		combo = (combo - (genomic_num_shards+1)) //last dummy value
-		commons = combo.collect{ "${it}_${id}.bam" }   //add .bam to each shardie, remove all other bams
-		bam_neigh = commons.join(' -i ')
-
-	"""
-	sentieon driver \\
-		-t ${task.cpus} \\
-		-r $genome_file \\
-		-i $bam_neigh $shard \\
-		--algo QualCal -k $params.KNOWN ${shard_name}_${id}.bqsr.table
-	"""
-}
-
-// Merge the bqrs shards
-process merge_bqsr {
-	input:
-		set id, file(tables) from bqsr_table.groupTuple()
-
-	output:
-		set val(id), file("${id}_merged.bqsr.table") into bqsr_merged
-
-	"""
-	sentieon driver \\
-		--passthru \\
-		--algo QualCal \\
-		--merge ${id}_merged.bqsr.table $tables
-	"""
-}
-
-process merge_dedup_bam {
-	cpus 1
-	publishDir "${OUTDIR}/bam", mode: 'copy', overwrite: 'true'
-
-	input:
-		set val(id), file(bams), file(bais) from all_dedup_bams4
-
-	output:
-		set group, id, file("${id}_merged_dedup.bam"), file("${id}_merged_dedup.bam.bai") into cov_bam, covbaf_bam, freebayes_bam, vardict_bam, manta_bam, dnascope_bam
-
-	script:
-		bams_sorted_str = bams.sort(false) { a, b -> a.getBaseName().tokenize("_")[0] as Integer <=> b.getBaseName().tokenize("_")[0] as Integer } .join(' -i ')
-		group = "bams"
-
-	"""
-	sentieon util merge -i ${bams_sorted_str} -o ${id}_merged_dedup.bam --mergemode 10
-	"""
-}
-
-bqsr_merged
-    .groupTuple()
-    .into{ bqsr_merged1; bqsr_merged2;}
-
-all_dedup_bams2
-    .join(bqsr_merged1)
-    .set{ all_dedup_bams3 }
-
-
-tndnascope_bams.groupTuple().set { allbams }
-
-all_dedup_bams3
-    .combine(shard_shard2).groupTuple(by:5).combine(allbams)
-    .set{ tnscope_bam_shards }
-
-// Do somatic SNV calling using TNscope, sharded
-process tnscope {
-	cpus 16
-	errorStrategy 'retry'
-	maxErrors 5
-
-	input:
-		set id, bams_dummy, bai_dummy, bqsr, val(shard_name), val(shard), val(one), val(two), val(three), val(grid), file(bams), file(bai) from tnscope_bam_shards
-
-	output:
-		set grid, file("${shard_name[0]}.vcf"), file("${shard_name[0]}.vcf.idx") into vcf_shard
-
-	script:
-		combo = [one[0], two[0], three[0]] // one two three take on values 0 1 2, 1 2 3...30 31 32
-		combo = (combo - 0) //first dummy value removed (0)
-		combo = (combo - (genomic_num_shards+1)) //last dummy value removed (32)
-		commonsT = (combo.collect{ "${it}_${id[0]}.bam" })   //add .bam to each combo to match bam files from input channel
-		commonsN = (combo.collect{ "${it}_${id[1]}.bam" })   //add .bam to each combo to match bam files from input channel
-		bam_neighT = commonsT.join(' -i ') 
-		bam_neighN = commonsN.join(' -i ') 
-
-	"""
-	sentieon driver \\
-		-t ${task.cpus} \\
-		-r $genome_file \\
-		-i $bam_neighT -i $bam_neighN $shard \\
-		-q ${bqsr[0][0]} -q ${bqsr[1][0]} \\
-		--algo TNscope --disable_detector sv --tumor_sample ${id[0]} --normal_sample ${id[1]}  ${shard_name[0]}.vcf
-	"""
-}
-
-
-// Merge vcf shards from TNscope
-process merge_vcf {
-	cpus 16
-
-	input:
-		set id, file(vcfs), file(idx) from vcf_shard.groupTuple()
-        
-	output:
-		set group, file("${id}.tnscope.vcf"), file("${id}.tnscope.vcf.idx") into complete_vcf
-
-	script:
-		group = "vcfs"
-		vcfs_sorted = vcfs.sort(false) { a, b -> a.getBaseName().tokenize("_")[0] as Integer <=> b.getBaseName().tokenize("_")[0] as Integer } .join(' ')
-
-	"""
-	sentieon driver \\
-		-t ${task.cpus} \\
-		--passthru \\
-		--algo DNAscope \\
-		--merge ${id}.tnscope.vcf $vcfs_sorted
-	"""
-}
-
-
-
-// Do germline SNV calling using DNAscope, sharded
-process dnascope {
-	cpus 50
-	errorStrategy 'retry'
-	maxErrors 5
-
-	input:
-		set gr, id, file(bam), file(bai) from dnascope_bam.groupTuple()
-		set group, smpl_id, type from meta_dnascope.groupTuple()
-
-	output:
-		set ID_Tumor, file("${ID_Tumor}_dnascope.vcf.gz") into gvcf_gens
-
-	script:
-		Tumor_index = type.findIndexOf{ it == 'tumor' || it == 'T' }
-		ID_Tumor = smpl_id[Tumor_index]
-		tumor_index= id.findIndexOf{it == "$ID_Tumor" }
-		bam_tumor = bam[tumor_index]
-
-	"""
-	sentieon driver \\
-		-t ${task.cpus} \\
-		-r $genome_file \\
-		-i $bam_tumor \\
-		--algo DNAscope --emit_mode GVCF ${ID_Tumor}_dnascope.vcf.gz
-	"""
-}
-
-
-
-// Variant calling with freebayes
-process freebayes {
-	cpus 1
-	errorStrategy 'retry'
-	maxErrors 5
-
-	input:
-		set val(gr), id, file(bam), file(bai) from freebayes_bam.groupTuple()
-		set val(group), smpl_id , val(type) from meta_freebayes.groupTuple()
-		each file(bed) from beds_freebayes
-
-	output:
-		set val("freebayes"), group , file("freebayes_${bed}.vcf") into vcfparts_freebayes
-		
-	script:
-		if( mode == "paired" ) {
-			Tumor_index = type.findIndexOf{ it == 'tumor' || it == 'T' }
-			ID_Tumor = smpl_id[Tumor_index]
-			tumor_index= id.findIndexOf{it == "$ID_Tumor" }
-			bam_tumor = bam[tumor_index]
-
-			Normal_index = type.findIndexOf{ it == 'normal' || it == 'N' }
-			ID_normal = smpl_id[Normal_index]
-			normal_index = id.findIndexOf{it == "$ID_normal" }
-			bam_normal = bam[normal_index]
-
-			"""
-			freebayes -f $genome_file -t $bed --pooled-continuous --pooled-discrete --min-repeat-entropy 1 -F 0.03 $bam_tumor $bam_normal  > freebayes_${bed}.vcf.raw
-			#vcffilter -F LowCov -f "DP > 30" -f "QA > 150" freebayes_${bed}.vcf.raw | vcffilter -F LowFrq -o -f "AB > 0.05" -f "AB = 0" | vcfglxgt > freebayes_${bed}.filt1.vcf
-			filter_freebayes_somatic_wgs.pl freebayes_${bed}.vcf.raw $ID_Tumor $ID_normal | grep -v 'FAIL_' > freebayes_${bed}.vcf
-			"""
-		}
-		else if( mode == "unpaired" ) {
-			"""
-			freebayes -f $genome_file -t $bed --pooled-continuous --pooled-discrete --min-repeat-entropy 1 -F 0.03 $bam > freebayes_${bed}.vcf
-			"""
-		}
-}
-
-
-
-process vardict {
-	cpus 4
-	errorStrategy 'retry'
-	maxErrors 5
-
-	input:
-		set gr, id, file(bam), file(bai) from vardict_bam.groupTuple()
-		set val(group), smpl_id , val(type) from meta_vardict.groupTuple()
-		each file(bed) from beds_vardict
-		//.splitText( by: 150, file: 'minibedpart.bed' )
-
-	output:
-		set val("vardict"), group , file("vardict_${bed}.vcf") into vcfparts_vardict
-		
-	script:
-		if( mode == "paired" ) {
-
-			Tumor_index = type.findIndexOf{ it == 'tumor' || it == 'T'  }
-			ID_Tumor = smpl_id[Tumor_index]
-			tumor_index= id.findIndexOf{it == "$ID_Tumor" }
-			bam_tumor = bam[tumor_index]
-
-			Normal_index = type.findIndexOf{ it == 'normal' || it == 'N' }
-			ID_normal = smpl_id[Normal_index] 
-			normal_index = id.findIndexOf{it == "$ID_normal" }
-			bam_normal = bam[normal_index]
-
-			"""
-			export JAVA_HOME=/opt/conda/envs/CMD-TUMWGS
-			vardict-java -U -th 4 -G $genome_file -f 0.03 -N ${ID_Tumor} -b "${bam_tumor}|${bam_normal}" -c 1 -S 2 -E 3 -g 4 ${bed} | testsomatic.R | var2vcf_paired.pl -N "${ID_Tumor}|${ID_normal}" -f 0.03 > vardict_${bed}.raw.vcf
-			filter_vardict_somatic_wgs.pl vardict_${bed}.raw.vcf $ID_Tumor $ID_normal | grep -v 'FAIL_' > vardict_${bed}.vcf
-			"""
-		}
-		else if( mode == "unpaired" ) {
-			"""
-			export JAVA_HOME=/opt/conda/envs/CMD-TUMWGS
-			vardict-java -U -G $genome_file -f 0.03 -N ${id} -b $bam -c 1 -S 2 -E 3 -g 4 $bed | teststrandbias.R | var2vcf_valid.pl -N  ${id} -E -f 0.03 > vardict_${bed}.vcf
-			"""
-		}
-}
-
-
-
-// Prepare vcf parts for concatenation
-vcfparts_freebayes = vcfparts_freebayes.groupTuple(by:[0,1])
-vcfparts_vardict = vcfparts_vardict.groupTuple(by:[0,1])
-vcfs_to_concat = vcfparts_freebayes.mix(vcfparts_vardict)
-
-
-
-
-process concatenate_vcfs {
-	publishDir "${OUTDIR}/vcf", mode: 'copy', overwrite: true
-
-	input:
-		set vc, gr, file(vcfs) from vcfs_to_concat
-		
-
-	output:
-		set gr, vc, file("${gr}_${vc}.vcf.gz") into concatenated_vcfs
-
-	"""
-	vcf-concat $vcfs | vcf-sort -c | gzip -c > ${vc}.concat.vcf.gz
-	vt decompose ${vc}.concat.vcf.gz -o ${vc}.decomposed.vcf.gz
-	vt index ${vc}.decomposed.vcf.gz
-	vt sort -m chrom  ${vc}.decomposed.vcf.gz -o  ${vc}.decomposed.sorted.vcf.gz
-	vt normalize ${vc}.decomposed.sorted.vcf.gz -r $genome_file | vt uniq - -o ${gr}_${vc}.vcf.gz
-	"""
-}
-
-
-process aggregate_vcfs {
-	cpus 1
-	publishDir "${OUTDIR}/vcf", mode: 'copy', overwrite: true
-	time '40m'
-
-	input:
-		set group, vc, file(vcfs) from concatenated_vcfs.groupTuple()
-		set g, id, type from meta_aggregate.groupTuple()
-
-	output:
-		set group, val("${id[tumor_idx]}"), file("${group}.agg.vcf") into vcf_pon
-
-	script:
-		sample_order = id[0]
-		if( mode == "paired" ) {
-			tumor_idx = type.findIndexOf{ it == 'tumor' || it == 'T' }
-			normal_idx = type.findIndexOf{ it == 'normal' || it == 'N' }
-			sample_order = id[tumor_idx]+","+id[normal_idx]
-		}
-
-	"""
-	aggregate_vcf.pl --vcf ${vcfs.sort(false) { a, b -> a.getBaseName() <=> b.getBaseName() }.join(",")} --sample-order ${sample_order} |vcf-sort -c > ${group}.agg.unsorted.vcf
-	vcf-sort -c ${group}.agg.unsorted.vcf > ${group}.agg.vcf
-	"""
-}
-
-process pon_filter {
-	publishDir "${OUTDIR}/vcf", mode: 'copy', overwrite: true
-	cpus 1
-	memory '40 GB'
-	time '1h'
-
-	input:
-		set group, tumor_id, file(vcf) from vcf_pon
-
-	output:
-		set group, file("${group}.agg.pon.vcf") into vcf_vep
-
-	script:
-		def pons = []
-		if( params.PON_freebayes ) { pons.push("freebayes="+params.PON_freebayes) }
-		if( params.PON_vardict )   { pons.push("vardict="+params.PON_vardict) }
-		def pons_str = pons.join(",")
-
-	"""
-	filter_with_pon.pl --vcf $vcf --pons $pons_str --tumor-id $tumor_id > ${group}.agg.pon.vcf
-	"""
-}
-
-
-complete_vcf
-    .groupTuple()
-    .set{ gvcfs }
-
-process gvcf_combine {
-	cpus 16
-
-	input:
-		set id, file(vcf), file(idx) from gvcfs
-		set val(group), val(id), r1, r2 from vcf_info
-
-	output:
-		set group, file("${group}.combined.vcf"), file("${group}.combined.vcf.idx") into combined_vcf
-
-	script:
-		// Om fler än en vcf, GVCF combine annars döp om och skickade vidare
-		if (mode == "family" ) {
-			ggvcfs = vcf.join(' -v ')
-
-			"""
-			sentieon driver \\
-				-t ${task.cpus} \\
-				-r $genome_file \\
-				--algo GVCFtyper \\
-				-v $ggvcfs ${group}.combined.vcf
-			"""
-		}
-		// annars ensam vcf, skicka vidare
-		else {
-			ggvcf = vcf.join('')
-			gidx = idx.join('')
-
-			"""
-			mv ${ggvcf} ${group}.combined.vcf
-			mv ${gidx} ${group}.combined.vcf.idx
-			"""
-		}
-}
-
-// Splitting & normalizing variants:
-process split_normalize {
-	cpus 1
-	publishDir "${OUTDIR}/vcf", mode: 'copy', overwrite: 'true'
-
-	input:
-		set group, file(vcf), file(idx) from combined_vcf
-
-	output:
-		set group, file("${group}.norm.uniq.DPAF.vcf") into split_norm, vcf_gnomad
-
-	"""
-	vcfbreakmulti ${vcf} > ${group}.multibreak.vcf
-	bcftools norm -m-both -c w -O v -f $genome_file -o ${group}.norm.vcf ${group}.multibreak.vcf
-	vcfstreamsort ${group}.norm.vcf | vcfuniq > ${group}.norm.uniq.vcf
-	wgs_DPAF_filter.pl ${group}.norm.uniq.vcf > ${group}.norm.uniq.DPAF.vcf
-	"""
-
-}
-
-// Intersect VCF, exome/clinvar introns
-process intersect {
-
-	input:
-		set group, file(vcf) from split_norm
-
-	output:
-		set group, file("${group}.intersected.vcf") into split_vep, split_cadd, vcf_loqus
-
-	"""
-	bedtools intersect -a $vcf -b $params.intersect_bed -u -header > ${group}.intersected.vcf
-	"""
-
-}
-
-
-process annotate_vep {
-	container = '/fs1/resources/containers/ensembl-vep_latest.sif'
-	publishDir "${OUTDIR}/vcf", mode: 'copy', overwrite: true
-	cpus 20
-	time '1h'
-
-	input:
-		set group, file(vcf) from vcf_vep
-
-	output:
-		set group, file("${group}.agg.pon.vep.vcf") into vcf_panel
-
-	"""
-	vep -i ${vcf} -o ${group}.agg.pon.vep.vcf \\
-		--offline --merged --everything --vcf --no_stats \\
-		--fork ${task.cpus} \\
-		--force_overwrite \\
-		--plugin CADD $params.CADD --plugin LoFtool \\
-		--fasta $params.VEP_FASTA \\
-		--dir_cache $params.VEP_CACHE --dir_plugins $params.VEP_CACHE/Plugins \\
-		--distance 200 \\
-		-cache -custom $params.GNOMAD \\
-	"""
-}
-
-process filter_with_panel_snv {
-	publishDir "${OUTDIR}/vcf", mode: 'copy', overwrite: true
-	cpus 1
-	time '1h'
-
-	input:
-		set group, file(vcf) from vcf_panel
-
-	output:
-		set group, file("${group}.agg.pon.vep.panel.vcf") into vcf_coyote
-
-	script:
-		should_hard_filter = params.SNV_HARD_FILTER ? '1' : ''
-
-	"""
-	filter_with_panel_snv.pl $vcf $params.PANEL_SNV $should_hard_filter > ${group}.agg.pon.vep.panel.vcf
-	"""
-}
-
-process gatkcov_baf {
-	cpus 2
-	memory '64 GB'
-
-	input:
-                set id, group, file(bam), file(bai), gr, sex, type from covbaf_bam.join(meta_gatkcov_baf, by:1)
-
-
-	output:
-                set group, id, type, file("${id}.allelicCounts.tsv") into covbaf_call
-    
-	"""
-	source activate gatk4-env
-
-	gatk --java-options "-Xmx50g" CollectAllelicCounts \\
-		-L $params.GATK_GNOMAD \\
-		-I $bam \\
-		-R $genome_file \\
-		-O ${id}.allelicCounts.tsv
-	"""
-
-}
-
-// Create coverage profile using GATK
-process gatkcov_count {
-	publishDir "${OUTDIR}/cov", mode: 'copy' , overwrite: 'true'    
-    
-	cpus 2
-	memory '64 GB'
-
-	input:
-		set id, group, file(bam), file(bai), gr, sex, type from cov_bam.join(meta_gatkcov, by:1).groupTuple(by:1)
-
-	output:
-		set group, val("${id[tumor_idx]}"), file("${id[tumor_idx]}.standardizedCR.tsv"), file("${id[tumor_idx]}.denoisedCR.tsv") into covcount_call
-		set val("${id[tumor_idx]}"), file("${id[tumor_idx]}.standardizedCR.tsv"), file("${id[tumor_idx]}.denoisedCR.tsv") into cov_gens
-
-
-	script:
-		tumor_idx = type.findIndexOf{ it == 'tumor' || it == 'T'  }
-
-	"""
-	source activate gatk4-env
-
-	gatk CollectReadCounts \\
-		-I ${bam[tumor_idx]} -L $params.COV_INTERVAL_LIST \\
-		--interval-merging-rule OVERLAPPING_ONLY -O ${bam[tumor_idx]}.hdf5
-
-	gatk --java-options "-Xmx50g" DenoiseReadCounts \\
-		-I ${bam[tumor_idx]}.hdf5 --count-panel-of-normals ${PON[sex[tumor_idx]]} \\
-		--standardized-copy-ratios ${id[tumor_idx]}.standardizedCR.tsv \\
-		--denoised-copy-ratios ${id[tumor_idx]}.denoisedCR.tsv
-
-	gatk PlotDenoisedCopyRatios \\
-		--standardized-copy-ratios ${id[tumor_idx]}.standardizedCR.tsv \\
-		--denoised-copy-ratios ${id[tumor_idx]}.denoisedCR.tsv \\
-		--sequence-dictionary $params.GENOMEDICT \\
-		--minimum-contig-length 46709983 --output . --output-prefix ${id[tumor_idx]}
-       """
-}
-
-process gatkcov_call {
-	publishDir "${OUTDIR}/cov", mode: 'copy' , overwrite: 'true'    
-    
-	cpus 2
-	memory '64 GB'
-
-	input:
-		set id, group, type, file(allelic), gr, file(stand), file(denoise) from covbaf_call.join(covcount_call, by:1, remainder:true).groupTuple(by:1)
-
-	output:
-		file("${id[tumor_idx]}.modeled.png") into cnvplot_coyote
-		set val("${id[tumor_idx]}"), group, file("${id[tumor_idx]}.called.seg") into cnvs_annotate
-
-	script:
-		tumor_idx = type.findIndexOf{ it == 'tumor' || it == 'T'  }
-		normal_idx = type.findIndexOf{ it == 'normal' || it == 'N'  }
-
-
-	"""
-	source activate gatk4-env
-
-	gatk --java-options "-Xmx40g" ModelSegments \\
-		--denoised-copy-ratios ${id[tumor_idx]}.denoisedCR.tsv \\
-		--allelic-counts ${id[tumor_idx]}.allelicCounts.tsv \\
-		--normal-allelic-counts ${id[normal_idx]}.allelicCounts.tsv \\
-		--minimum-total-allele-count-normal 20 \\
-		--output . \\
-		--output-prefix ${id[tumor_idx]}
-
-	gatk CallCopyRatioSegments \\
-		--input ${id[tumor_idx]}.cr.seg \\
-		--output ${id[tumor_idx]}.called.seg
-
-	gatk PlotModeledSegments \\
-		--denoised-copy-ratios ${id[tumor_idx]}.denoisedCR.tsv \\
-		--allelic-counts ${id[tumor_idx]}.hets.tsv \\
-		--segments ${id[tumor_idx]}.modelFinal.seg \\
-		--sequence-dictionary $params.GENOMEDICT \\
-		--minimum-contig-length 46709983 \\
-		--output . \\
-		--output-prefix ${id[tumor_idx]}
-	"""
-}
-
-process cnvs_annotate {
-	publishDir "${OUTDIR}/cnv", mode: 'copy', overwrite: 'true'
-	tag "$group"
-	cpus 1
-	time '30m'
-	
-	input:
-		set id, group, file(segments) from cnvs_annotate
-
-	output:
-		set id, group, file("${id}.cnv.annotated.bed") into cnvs_filter
-
-	"""
-	overlapping_genes.pl $segments $params.GENE_BED_PC > ${id}.cnv.annotated.bed
-	"""
-}
-
-process panel_cnvs {
-	publishDir "${OUTDIR}/cnv", mode: 'copy', overwrite: 'true'
-	tag "$group"
-	cpus 1
-	time '30m'
-	
-	input:
-		set id, group, file(bed) from cnvs_filter
-
-	output:
-		set id, group, file("${id}.cnv.annotated.panel.bed") into cnv_coyote
-		
-	"""
-	filter_with_panel_cnv.pl $bed $params.PANEL_CNV > ${id}.cnv.annotated.panel.bed
-	"""
-}
-
-process generate_gens_data {
-	publishDir "${OUTDIR}/plot_data", mode: 'copy' , overwrite: 'true'
-	tag "$group"
-	cpus 1
-
-	input:
-		set id, file(gvcf), file(cov_stand), file(cov_denoise) from gvcf_gens.join(cov_gens)
-
-	output:
-		set file("${id}.cov.bed.gz"), file("${id}.baf.bed.gz"), file("${id}.cov.bed.gz.tbi"), file("${id}.baf.bed.gz.tbi")
-
-	"""
-	generate_gens_data.pl $cov_stand $gvcf $id $params.GENS_GNOMAD
-	"""
-}
-
-
-//Somatic Variant Calling - Manat 
-process manta{
-	publishDir "$OUTDIR/manta" , mode:'copy'
-	cpus 20
-	memory '64 GB'
-
-	input: 
-		set val(gr), id, file(bam), file(bai) from manta_bam.groupTuple()
-		set val(group), smpl_id , val(type) from meta_manta.groupTuple()
-
-	output:
-		set val(group), file("${group}_manta.vcf") into manta_vcf
-
-	script:
-	
-	if( mode == "paired" ) {
-
-		Tumor_index = type.findIndexOf{ it == 'tumor' || it == 'T' }
-		ID_Tumor = smpl_id[Tumor_index]
-		tumor_index= id.findIndexOf{it == "$ID_Tumor" }
-		bam_tumor = bam[tumor_index]
-
-		Normal_index = type.findIndexOf{ it == 'normal' || it == 'N' }
-		ID_normal = smpl_id[Normal_index] 
-		normal_index = id.findIndexOf{it == "$ID_normal" }
-		bam_normal = bam[normal_index]
-
+/* Report the workflow */
+workflow.onComplete {
+
+	def msg = """\
+		Pipeline execution summary
+		---------------------------
+		Completed at: ${workflow.complete}
+		Duration    : ${workflow.duration}
+		Success     : ${workflow.success}
+		scriptFile  : ${workflow.scriptFile}
+		workDir     : ${workflow.workDir}
+		exit status : ${workflow.exitStatus}
+		errorMessage: ${workflow.errorMessage}
+		errorReport :
 		"""
-		configManta.py \\
-		--tumorBam ${bam_tumor} \\
-		--normalBam ${bam_normal} \\
-		--reference ${genome_file} \\
-		--runDir .
-
-		python runWorkflow.py -m local -j ${task.cpus}
-		mv ./results/variants/somaticSV.vcf.gz ${group}_manta.vcf.gz
-		gunzip ${group}_manta.vcf.gz
-		
+		.stripIndent()
+	def error = """\
+		${workflow.errorReport}
 		"""
-		}
-	else if( mode == "unpaired" ) {
-		"""
-		configManta.py \\
-			--tumorBam ${bam} \\
-			--reference ${genome_file} \\
-			--generateEvidenceBam \\
-			--region \\
-			--runDir .
-		python runWorkflow.py -m local -j ${task.cpus}
-		
-		mv ./results/variants/tumorSV.vcf.gz ${group}_manta.vcf.gz
-		gunzip ${group}_manta.vcf.gz 
-		"""
-		}	
-	}
+		.stripIndent()
 
-
-process annotate_manta {
-	publishDir "$OUTDIR/manta" , mode:'copy'
-	cpus 2
-	memory '8 GB'
-
-	input:
-		set group, file(vcf) from manta_vcf
-
-	output:
-		set group, file("${group}.manta.snpeff.vcf") into manta_vcf_fusion
-
-	"""
-	snpEff -Xmx4g -configOption data.dir=$params.SNPEFF_DIR GRCh38.86 \\
-		$vcf > ${group}.manta.snpeff.vcf
-	"""
-}
-
-process filter_with_panel_fusions {
-	publishDir "$OUTDIR/vcf" , mode:'copy'
-	cpus 2
-	memory '8 GB'
-	time '30m'
-
-	input:
-		set group, file(vcf) from manta_vcf_fusion
-
-	output:
-		set group, file("${group}.manta.fusions.vcf") into fusions_coyote
-
-	"""
-	filter_with_panel_fusions.pl $vcf $params.PANEL_FUS > ${group}.manta.fusions.vcf
-	"""
-}
-
-process coyote {
-	publishDir "${params.crondir}/coyote", mode: 'copy', overwrite: true
-	cpus 1
-	time '10m'
-
-	input:
-		set group, file(vcf), foo, file(cnv), file(fusions) from vcf_coyote.join(cnv_coyote).join(fusions_coyote)
-		set g, type, lims_id, pool_id from meta_coyote.groupTuple()
-		file(cnvplot) from cnvplot_coyote
-
-	output:
-		file("${group}.coyote_wgs")
-
-	script:
-		tumor_idx = type.findIndexOf{ it == 'tumor' || it == 'T' }
-
-	"""
-	echo "import_myeloid_to_coyote_vep_gms_dev.pl \\
-		--id $group --group tumwgs \\
-		--vcf /access/tumwgs/vcf/${vcf} \\
-		--cnv /access/tumwgs/cnv/${cnv} \\
-		--transloc /access/tumwgs/vcf/${fusions} \\
-		--cnvprofile /access/tumwgs/cov/${cnvplot} \\
-		--clarity-sample-id ${lims_id[tumor_idx]} \\
-		--clarity-pool-id ${pool_id[tumor_idx]}" > ${group}.coyote_wgs
-	"""
+	base = file(params.csv).getBaseName()
+	logFile = file("$params.outdir/cron/logs/" + base + ".complete")
+	logFile.text = msg
+	logFile.append(error)
 }
