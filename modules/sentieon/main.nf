@@ -846,12 +846,19 @@ process FILTER_WITH_PANEL_SNV {
 		 tuple 	val(group), path("${group}.agg.pon.vep.panel.vcf")
 
 	script:
-		should_hard_filter = params.SNV_HARD_FILTER ? '1' : ''
-
-	"""
-	filter_with_panel_snv.pl ${vcf} ${snv_panel} ${should_hard_filter} > ${group}.agg.pon.vep.panel.vcf
-
-	"""
+		def should_hard_filter = params.SNV_HARD_FILTER ? '1' : ''
+		def panel_info = params.panels[params.panel]
+		println (panel_info)
+		if (panel_info == "solid" ) { 
+			"""
+			filter_with_panel_snv.pl ${vcf} ${snv_panel} ${should_hard_filter} > ${group}.agg.pon.vep.panel.vcf
+			"""
+		}
+		else {
+			"""
+			filter_with_panel_snv_al.pl ${vcf} ${snv_panel} ${should_hard_filter} > ${group}.agg.pon.vep.panel.vcf
+			"""
+		}
 }
 
 process MANTA {
