@@ -2,13 +2,13 @@
 
 The main script for running the pipeline is "main.nf". You have to change the config file accordingly to the server requirements and panel configuration. Currently, our worker server is hopper and single command line for running the pipeline is given below  
 
-**Running the "ALL" pipeline**
+**Running the "hema" pipeline**
 
 
 ```console
 ~$ ml singularity Java nextflow/21.10.6
 ~$ nextflow run main.nf -profile hopper \
-    --panel all \
+    --panel hema \
     -csv sample.csv \ 
     --queue grace-normal \
     -with-singularity ~/path/to/container/tumwgs_2022-02-08.sif \
@@ -36,8 +36,8 @@ The main script for running the pipeline is "main.nf". You have to change the co
 But ofcourse if you have already defined these pipelines in `pipeline_files.config` defined as follows:
 
 ```
-[tumwgs-all]
-pipeline = /fs1/saile/prj/nextflow_tumwgs_dev_v2.0/main.nf -profile hopper --panel all
+[tumwgs-hema]
+pipeline = /fs1/saile/prj/nextflow_tumwgs_dev_v2.0/main.nf -profile hopper --panel hema
 container = /fs1/saile/prj/nextflow_tumwgs_dev_v2.0/container/tumwgs_2022-02-08.sif
 singularity_version = 3.8.0
 nextflow_version = 21.04.2
