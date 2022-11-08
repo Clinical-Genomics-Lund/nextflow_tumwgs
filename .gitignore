@@ -1,7 +1,6 @@
 *~
 container/*.sif
 .nextflow*
-nextflow.config
 work/
 *.html
 *#
@@ -9,3 +8,4 @@ work/
 *.vcf.gz
 *.fq.gz
 __test/
+.shards_file/*
