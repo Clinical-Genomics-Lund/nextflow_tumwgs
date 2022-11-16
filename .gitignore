@@ -8,3 +8,5 @@ work/
 *.vcf.gz
 *.fq.gz
 __test/
+main_test.nf*
+
