@@ -14,3 +14,4 @@
 #### Fixes
 	* 	Sharding from 32 to 8 for better I/O specially with bqsr steps in senteion
 	* 	Changes with the profile configs
+	* 	Changes with the coyote to include sample-wgs

@@ -847,7 +847,7 @@ process FILTER_WITH_PANEL_SNV {
 
 	script:
 		def should_hard_filter = params.SNV_HARD_FILTER ? '1' : ''
-		def panel_info = params.panels[params.panel]
+		def panel_info = params.panel
 		println (panel_info)
 		if (panel_info == "solid" ) { 
 			"""
@@ -1208,14 +1208,14 @@ process FILTER_WITH_PANEL_CNVS {
 process GENERATE_GENS_DATA {
 	tag "$id"
 	label "process_low"
-	publishDir "$params.outdir/$params.subdir/gens", 
+	publishDir "$params.outdir/$params.subdir/plot_data", 
 				mode: 'copy', 
 				overwrite: 'true', 
 				pattern: '*.bed.gz*'
-	publishDir "$params.outdir/$params.subdir/gens", 
+	publishDir "$params.outdir/$params.subdir/plot_data", 
 				mode: 'copy', 
 				overwrite: 'true', 
-				pattern: '*.json.gz*'
+				pattern: '*.json.gz'
 	publishDir "$params.crondir/gens", 
 				mode: 'copy', 
 				overwrite: 'true',
@@ -1227,7 +1227,7 @@ process GENERATE_GENS_DATA {
 		tuple	val(id), path(gvcf), path(cov_stand), path(cov_denoise) 
 
 	output:
-		tuple	path("${id}.cov.bed.gz"), path("${id}.baf.bed.gz"), path("${id}.cov.bed.gz.tbi"), path("${id}.baf.bed.gz.tbi")
+		tuple	path("${id}.cov.bed.gz"), path("${id}.baf.bed.gz"), path("${id}.cov.bed.gz.tbi"), path("${id}.baf.bed.gz.tbi"), path ("${id}.overview.json.gz")
 		path	("${id}.gens")  
 
 	"""
@@ -1240,14 +1240,14 @@ process GENERATE_GENS_DATA {
 process GENERATE_GENS_DATA_NOR {
 	tag "$id"
 	label "process_low"
-	publishDir "$params.outdir/$params.subdir/gens", 
+	publishDir "$params.outdir/$params.subdir/plot_data", 
 				mode: 'copy', 
 				overwrite: 'true', 
 				pattern: '*.bed.gz*'
-	publishDir "$params.outdir/$params.subdir/gens", 
+	publishDir "$params.outdir/$params.subdir/plot_data", 
 				mode: 'copy', 
 				overwrite: 'true', 
-				pattern: '*.json.gz*'
+				pattern: '*.json.gz'
 	publishDir "$params.crondir/gens", 
 				mode: 'copy', 
 				overwrite: 'true',
@@ -1258,7 +1258,7 @@ process GENERATE_GENS_DATA_NOR {
 		tuple	val(id), path(gvcf), path(cov_stand), path(cov_denoise) 
 
 	output:
-		tuple	path("${id}.cov.bed.gz"), path("${id}.baf.bed.gz"), path("${id}.cov.bed.gz.tbi"), path("${id}.baf.bed.gz.tbi")
+		tuple	path("${id}.cov.bed.gz"), path("${id}.baf.bed.gz"), path("${id}.cov.bed.gz.tbi"), path("${id}.baf.bed.gz.tbi"), path("${id}.overview.json.gz")
 		path 	("${id}.gens")
 
 	"""
@@ -1286,10 +1286,15 @@ process COYOTE {
 	script:
 	if( lims_id.size() >= 2 ) {
 		tumor_idx = type.findIndexOf{ it == 'tumor' || it == 'T' }
-		normal_idx = type.findIndexOf{ it == 'normal' || it == 'N' }	
+		normal_idx = type.findIndexOf{ it == 'normal' || it == 'N' }
+<<<<<<< HEAD
+		group_assay = "$group-wgs"	
+=======
+		group_assay =  "${group}-wgs"
+>>>>>>> b4da91e5c4fa75f5710b87db74d91ca7fce4c20a
 		"""
 			echo "/data/bnf/scripts/import_myeloid_to_coyote_vep_gms_dev_WGS.pl \\
-			--id ${group} --group tumwgs \\
+			--id ${group_assay} --group tumwgs \\
 			--vcf /access/tumwgs/vcf/${vcf} \\
 			--cnv /access/tumwgs/cnv/${cnv} \\
 			--transloc /access/tumwgs/vcf/${fusions} \\
@@ -1305,7 +1310,7 @@ process COYOTE {
 		tumor_idx = type.findIndexOf{ it == 'tumor' || it == 'T' }
 		"""
 			echo "/data/bnf/scripts/import_myeloid_to_coyote_vep_gms_dev_WGS.pl \\
-			--id ${group} --group tumwgs \\
+			--id ${group_assay} --group tumwgs \\
 			--vcf /access/tumwgs/vcf/${vcf} \\
 			--cnv /access/tumwgs/cnv/${cnv} \\
 			--transloc /access/tumwgs/vcf/${fusions} \\

@@ -458,7 +458,7 @@ workflow {
                             tnscope_workflow.out.vcf,
                             fastq_sharded,
                             metaId  )
-    sv_calling_workflow (   mode,
+     sv_calling_workflow (   mode,
                             sentieon_workflow.out.cram,
                             metaId)
     cnv_calling_workflow (  gatkId,
