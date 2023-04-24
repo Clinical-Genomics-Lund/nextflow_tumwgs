@@ -19,7 +19,12 @@ my @supported_callers = ('freebayes', 'mutect2', 'tnscope', 'vardict', 'pindel' 
 
 # Get command line options
 my %opt = ();
-GetOptions( \%opt, 'vcfs=s', 'tumor-id=s', 'normal-id=s', 'fluffify-pindel', 'sample-order=s' );
+GetOptions( \%opt, 
+            'vcfs=s', 
+            'tumor-id=s', 
+            'normal-id=s', 
+            'fluffify-pindel', 
+            'sample-order=s' );
 my @vcfs = check_options( \%opt );
 
 my @sample_order;
@@ -28,7 +33,7 @@ my @sample_order;
 # Aggregate the vcfs
 my( $agg_vars, $agg_header, $filters ) = aggregate_vcfs( @vcfs );
 
-# Output final vcf
+# Output final vcfq
 print_header($filters, $vcfs[0]);
 foreach my $vid (keys %$agg_vars ) {
     vcfstr($agg_vars->{$vid}, \@sample_order);
@@ -58,7 +63,6 @@ sub print_header {
     }
 	    
 }
-
 
 sub aggregate_vcfs {
     my @vcfs = @_;

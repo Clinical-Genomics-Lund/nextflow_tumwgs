@@ -8,5 +8,9 @@ work/
 *.vcf.gz
 *.fq.gz
 __test/
+<<<<<<< HEAD
 main_test.nf*
 
+=======
+.shards_file/*
+>>>>>>> 821f22f5c08d7d09f4bc79bd587d9ee649d09868
