@@ -96,8 +96,6 @@ while ( my $v = $vcf->next_var() ) {
 
 
 
-
-
 sub add_info {
     my( $var, $key, $val ) = @_;
     push( @{$var->{INFO_order}}, $key );

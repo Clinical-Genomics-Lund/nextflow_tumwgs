@@ -1287,7 +1287,11 @@ process COYOTE {
 	if( lims_id.size() >= 2 ) {
 		tumor_idx = type.findIndexOf{ it == 'tumor' || it == 'T' }
 		normal_idx = type.findIndexOf{ it == 'normal' || it == 'N' }
+<<<<<<< HEAD
 		group_assay = "$group-wgs"	
+=======
+		group_assay =  "${group}-wgs"
+>>>>>>> b4da91e5c4fa75f5710b87db74d91ca7fce4c20a
 		"""
 			echo "/data/bnf/scripts/import_myeloid_to_coyote_vep_gms_dev_WGS.pl \\
 			--id ${group_assay} --group tumwgs \\

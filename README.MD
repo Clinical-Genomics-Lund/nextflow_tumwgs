@@ -1,6 +1,6 @@
-## Nextflow tumor WGS pipeline 
+## Center for molecular diagnostics (CMD) tumor whole genome sequencing pipeline 
 
-The main script for running the pipeline is "main.nf". You have to change the config file accordingly to the server requirements and panel configuration. Currently, our worker server is hopper and single command line for running the pipeline is given below  
+The main script for running the pipeline is "main.nf". You have to change the config file accordingly to the server requirements and panel accordingly to research question - i.e either hematolgy and solid tumor. Currently, our computing server is "hopper and grace" hence a profile $hopper is created with all the server descriptions (see nextflow.config for more information).Running the pipeline based on biologial question types in our CMD server (hopper/grace) is given below:  
 
 **Running the "hema" pipeline**
 
@@ -18,7 +18,7 @@ The main script for running the pipeline is "main.nf". You have to change the co
     -work-dir /path/to/workdir/nextflow/nextflow//val-6883-19.tumwgs-all
 ```
 
-**Running the "solid" pipeline**
+**Running the "Solid Tumor" pipeline**
 
 ```console
 ~$ ml singularity Java nextflow/21.10.6
@@ -33,7 +33,7 @@ The main script for running the pipeline is "main.nf". You have to change the co
     -work-dir /path/to/workdir/nextflow/nextflow//val-6883-19.tumwgs-all
 ```
 
-But ofcourse if you have already defined these pipelines in `pipeline_files.config` defined as follows:
+But ofcourse if you have already predefined these configurations in `pipeline_files.config` defined as follows the `start_nextflow_analysis.pl` ´ starter will triggers the correct pipelines
 
 ```
 [tumwgs-hema]
@@ -55,10 +55,14 @@ cluster = grace
 queue = normal
 ```
 
-Then running the pipeline from our own `start_nextflow_analysis.pl`starter with the bash script is as follows:
+Under the hood `start_nextflow_analysis.pl`starter and necessary `*.csv' (usually gerated from earlier Bjorn systen)" will run in the bash as follows:
 
-```console
-~$ /path/to/your/start_nextflow_analysis.pl sample.csv
+```console 
+## Hematolgy
+~$ /path/to/your/start_nextflow_analysis.pl sample_hema.csv
+
+## Solid 
+~$ /path/to/your/start_nextflow_analysis.pl sample_solid.csv
 
 ```
- In our production server the bash script for the individual file and the csv files are automatically generated thereby nextflow script is activated upon availability of the csv and shell scripts.
+In our production server the bash script for the individual file and the csv files are automatically generated thereby nextflow script is activated upon availability of the csv and shell scripts.
