@@ -346,20 +346,22 @@ workflow gens_tum_workflow {
     take:
         gatkcovTum
         dnascopeTum
+        metaCoyote
 
     main:
         gens = dnascopeTum.join(gatkcovTum)
-        GENERATE_GENS_DATA ( params.GENS_GNOMAD, gens)
+        GENERATE_GENS_DATA ( params.GENS_GNOMAD, gens,metaCoyote)
 }
 
 workflow gens_nor_workflow {
     take:
         gatkcovNor
         dnascopeNor
+        metaCoyote
 
     main:
         gensN = dnascopeNor.join(gatkcovNor)
-        GENERATE_GENS_DATA_NOR ( params.GENS_GNOMAD, gensN)
+        GENERATE_GENS_DATA_NOR ( params.GENS_GNOMAD, gensN,metaCoyote)
 }
 
 workflow coyote_workflow {
@@ -429,7 +431,7 @@ Channel
 Channel
     .fromPath(params.csv)
     .splitCsv(header:true)
-    .map{ row-> tuple(row.group, row.id, row.type, row.clarity_sample_id, row.clarity_pool_id) }
+    .map{ row-> tuple(row.group, row.id, row.type, row.clarity_sample_id, row.clarity_pool_id, row.assay) }
     .set { metaCoyote }
 
 
@@ -464,10 +466,13 @@ workflow {
     cnv_calling_workflow (  gatkId,
                             sentieon_workflow.out.cram    )
 
-    gens_tum_workflow (cnv_calling_workflow.out.tumCov,        dnascope_tum_workflow.out.vcf )                   
+    gens_tum_workflow (cnv_calling_workflow.out.tumCov,        dnascope_tum_workflow.out.vcf, metaCoyote )                   
 
-    gens_nor_workflow ( cnv_calling_workflow.out.norCov,            dnascope_nor_workflow.out.vcf  ) 
+    gens_nor_workflow ( cnv_calling_workflow.out.norCov,            dnascope_nor_workflow.out.vcf, metaCoyote ) 
 
+    snv_calling_workflow.out.vcf.view()
+    sv_calling_workflow.out.vcf.view()
+    cnv_calling_workflow.out.vcf.view() 
     coyote_workflow (   metaCoyote,
                         snv_calling_workflow.out.vcf,
                         sv_calling_workflow.out.vcf,
