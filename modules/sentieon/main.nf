@@ -1198,7 +1198,7 @@ process FILTER_WITH_PANEL_CNVS {
 		tuple val(id), val(group), path(bed) 
 
 	output:
-		tuple val(id), val(group), path("${id}.cnv.annotated.panel.bed") 
+		tuple val(group), path("${id}.cnv.annotated.panel.bed") 
 		
 	"""
 	filter_with_panel_cnv.pl ${bed} ${cnv_panel} > ${id}.cnv.annotated.panel.bed
@@ -1224,16 +1224,19 @@ process GENERATE_GENS_DATA {
 	
 	input:
 		path(params.GENS_GNOMAD)
-		tuple	val(id), path(gvcf), path(cov_stand), path(cov_denoise) 
+		tuple	val(id), path(gvcf), path(cov_stand), path(cov_denoise)
+		tuple	val(g), val(sampleID), val(type), val(lims_id), val(pool_id), val (assay)
 
 	output:
 		tuple	path("${id}.cov.bed.gz"), path("${id}.baf.bed.gz"), path("${id}.cov.bed.gz.tbi"), path("${id}.baf.bed.gz.tbi"), path ("${id}.overview.json.gz")
-		path	("${id}.gens")  
+		path	("${id}_${assay}.gens")
+
+	script:
 
 	"""
 	generate_gens_data.pl ${cov_stand} ${gvcf} ${id} ${params.GENS_GNOMAD}
 
-	echo "gens load sample --sample-id $id --genome-build 38 --baf ${params.gens_accessdir}/${id}.baf.bed.gz --coverage ${params.gens_accessdir}/${id}.cov.bed.gz --overview-json ${params.gens_accessdir}/${id}.overview.json.gz" > ${id}.gens 
+	echo "gens load sample --sample-id ${id}_${assay} --genome-build 38 --baf ${params.gens_accessdir}/${id}.baf.bed.gz --coverage ${params.gens_accessdir}/${id}.cov.bed.gz --overview-json ${params.gens_accessdir}/${id}.overview.json.gz" > ${id}_${assay}.gens 
 	"""
 }
 
@@ -1256,28 +1259,32 @@ process GENERATE_GENS_DATA_NOR {
 	input:
 		path(params.GENS_GNOMAD)
 		tuple	val(id), path(gvcf), path(cov_stand), path(cov_denoise) 
+		tuple	val(g), val(sampleID), val(type), val(lims_id), val(pool_id), val (assay)
 
 	output:
 		tuple	path("${id}.cov.bed.gz"), path("${id}.baf.bed.gz"), path("${id}.cov.bed.gz.tbi"), path("${id}.baf.bed.gz.tbi"), path("${id}.overview.json.gz")
-		path 	("${id}.gens")
+		path	("${id}_${assay}.gens")
+
+	
+	script:
 
 	"""
 	generate_gens_data.pl ${cov_stand} ${gvcf} ${id} ${params.GENS_GNOMAD}
 	
-	echo "gens load sample --sample-id $id --genome-build 38 --baf ${params.gens_accessdir}/${id}.baf.bed.gz --coverage ${params.gens_accessdir}/${id}.cov.bed.gz --overview-json ${params.gens_accessdir}/${id}.overview.json.gz" > ${id}.gens 
+	echo "gens load sample --sample-id ${id}_${assay} --genome-build 38 --baf ${params.gens_accessdir}/${id}.baf.bed.gz --coverage ${params.gens_accessdir}/${id}.cov.bed.gz --overview-json ${params.gens_accessdir}/${id}.overview.json.gz" > ${id}_${assay}.gens 
 	"""
 }
 
 process COYOTE {
-	tag "$id"
+	tag "$group"
 	label "process_low"	
 	publishDir "${params.crondir}/coyote", 
 				mode: 'copy', 
 				overwrite: true
 
 	input:
-		tuple 	val(group), path(vcf), val(id), path(cnv), path(fusions)
-		tuple	val(g), val(sampleID), val(type), val(lims_id), val(pool_id) 
+		tuple 	val(group), path(vcf), path(cnv), path(fusions)
+		tuple	val(g), val(sampleID), val(type), val(lims_id), val(pool_id), val (assay)
 		path (cnvplot)
 
 	output:
@@ -1287,37 +1294,41 @@ process COYOTE {
 	if( lims_id.size() >= 2 ) {
 		tumor_idx = type.findIndexOf{ it == 'tumor' || it == 'T' }
 		normal_idx = type.findIndexOf{ it == 'normal' || it == 'N' }
-<<<<<<< HEAD
-		group_assay = "$group-wgs"	
-=======
-		group_assay =  "${group}-wgs"
->>>>>>> b4da91e5c4fa75f5710b87db74d91ca7fce4c20a
+		
+		assay1 = assay[0]
+		// def gens_tumor = ${sampleID[tumor_idx]} + ${assay}
+		// def gens_normal = ${sampleID[normal_idx]} + ${assay}
+
 		"""
 			echo "/data/bnf/scripts/import_myeloid_to_coyote_vep_gms_dev_WGS.pl \\
-			--id ${group_assay} --group tumwgs \\
+			--id ${group} --group tumwgs \\
 			--vcf /access/tumwgs/vcf/${vcf} \\
 			--cnv /access/tumwgs/cnv/${cnv} \\
 			--transloc /access/tumwgs/vcf/${fusions} \\
 			--cnvprofile /access/tumwgs/cov/${cnvplot} \\
 			--clarity-sample-id ${lims_id[tumor_idx]} \\
 			--build 38 \\
-        	--gens ${group} \\
-			--gensNorm ${sampleID[normal_idx]} \\
+        	--gens ${sampleID[tumor_idx]}_${assay1} \\
+			--gensNorm ${sampleID[normal_idx]}_${assay1} \\
 			--clarity-pool-id ${pool_id[tumor_idx]}" > ${group}.coyote_wgs
 		"""
 	}
 	else {
 		tumor_idx = type.findIndexOf{ it == 'tumor' || it == 'T' }
+
+		assay1 = assay[0] 
+		// def gens_tumor = ${sampleID[tumor_idx]} + ${assay}
+		
 		"""
 			echo "/data/bnf/scripts/import_myeloid_to_coyote_vep_gms_dev_WGS.pl \\
-			--id ${group_assay} --group tumwgs \\
+			--id ${group} --group tumwgs \\
 			--vcf /access/tumwgs/vcf/${vcf} \\
 			--cnv /access/tumwgs/cnv/${cnv} \\
 			--transloc /access/tumwgs/vcf/${fusions} \\
 			--cnvprofile /access/tumwgs/cov/${cnvplot} \\
 			--clarity-sample-id ${lims_id[tumor_idx]} \\
 			--build 38 \\
-        	--gens ${group} \\
+        	--gens ${sampleID[tumor_idx]}_${assay} \\
 			--clarity-pool-id ${pool_id[tumor_idx]}" > ${group}.coyote_wgs
 
 		"""
