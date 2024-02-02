@@ -112,7 +112,7 @@ process BAM_CRAM_ALL {
 process LOCUS_COLLECTOR {
 	tag "$shard_name $id"
 	container =   '/fs1/resources/containers/wgs_active.sif'
-	label "process_low"
+	label "process_medium"
 	maxErrors 5
 
 	input:
@@ -136,7 +136,7 @@ process LOCUS_COLLECTOR {
 process DEDUP {
 	tag "$shard_name $id"
 	container =   '/fs1/resources/containers/wgs_active.sif'
-	label "process_low"
+	label "process_medium"
 
 	input:
 		path(params.genome_file)
@@ -603,7 +603,7 @@ process FREEBAYES {
 
 process VARDICT {
 	tag "$group $id"
-	label "process_low"
+	label "process_medium"
 	errorStrategy 'retry'
 	maxErrors 5
 
